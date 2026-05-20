@@ -5,10 +5,46 @@ class Crossing:
     def __init__(self):
         self.road_length = 10
         self.crossing_point = 5
+        self.car_stop_line = 4
+
+        self.ped_path_length = 5
+        self.ped_stop_line = 2
+
         self.reset()
 
     def reset(self):
-        self.light_state = 'green' # assume vehicles have green light initially, pedestrians have red light
+        self.light_state = 1 # assume vehicles have green light initially, pedestrians have red light
         self.vehicles = []
         self.pedestrians = []
         self.time_step = 0
+
+        return self.get_state()
+    
+    def get_state(self):
+        waiting_vehicles = sum(1 for v in self.vehicles if v.position <= self.car_stop_line and self.light_state == 0)
+        waiting_pedestrians = sum(1 for p in self.pedestrians if p.position <= self.ped_stop_line and self.light_state == 1)
+
+        return {
+            "light_state": self.light_state,
+            "waiting_vehicles": waiting_vehicles,
+            "waiting_pedestrians": waiting_pedestrians
+        }
+    
+    def step(self, action):
+        """
+        action: 0 for keeping the current light state, 1 for switching the light state
+        """
+        self.time_step += 1
+
+        if action == 1:
+            self.light_state = 1 - self.light_state # switch light state
+
+        if random.random() < 0.3: # 30% chance of a new vehicle arriving
+            self.vehicles.append(Vehicle(start_pos=0))
+        if random.random() < 0.2: # 20% chance of a new pedestrian arriving
+            self.pedestrians.append(Pedestrian(start_pos=0))
+
+        current_step_car_wait = 0
+        current_step_ped_wait = 0
+
+        
