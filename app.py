@@ -12,7 +12,7 @@ st.title("Reinforcement Learning - Single Crossing Dashboard")
 # ==========================================
 # 1. Sidebar Configuration
 # ==========================================
-st.sidebar.header("Reinforcement Learning Hyperparameters")
+st.sidebar.header("Hyperparameters")
 
 # Allows user to adjust hyperparameters interactively
 alpha = st.sidebar.slider(
@@ -66,7 +66,7 @@ with col3:
     best_reward_card = st.empty()
     best_reward_card.metric(label="Best Reward This Run", value="-")
 
-st.subheader("Real-time Training Reward Trend (Total Reward)")
+st.subheader("Real-time Training Reward Trend")
 # Placeholder chart component to dynamically append streaming values
 chart_placeholder = st.empty()
 
