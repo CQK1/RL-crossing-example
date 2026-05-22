@@ -7,7 +7,7 @@ from agent import QLearningAgent
 
 # Set page configuration and layout
 st.set_page_config(page_title="RL Traffic Signal Training Dashboard", layout="wide")
-st.title("Reinforcement Learning - Single Intersection Traffic Signal Control Training Dashboard")
+st.title("Reinforcement Learning - Single Crossing Dashboard")
 
 # ==========================================
 # 1. Sidebar Configuration
