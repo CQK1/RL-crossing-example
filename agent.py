@@ -40,7 +40,7 @@ class QLearningAgent:
             
             return random.choice(best_actions)  # If multiple actions have the same max Q-value, choose randomly among them
         
-    def learn(self, state, action, reward, next_state):
+    def learn(self, state, action, reward, next_state, done):
         self._ensure_state_in_q_table(state)
         self._ensure_state_in_q_table(next_state)
 
@@ -48,10 +48,13 @@ class QLearningAgent:
         next_state_key = self._get_state_key(next_state)
 
         # Q-learning update rule
-        best_next_q = max(self.q_table[next_state_key].values())
-
+        if done:
+            target = reward
+        else:
+            best_next_q = max(self.q_table[next_state_key].values())
+            target = reward + self.gamma * best_next_q
         
-        self.q_table[state_key][action] += self.alpha * (reward + self.gamma * best_next_q - self.q_table[state_key][action])
+        self.q_table[state_key][action] += self.alpha * (target - self.q_table[state_key][action])
 
     def save_q_table(self, filename="q_table.json"):
         exportable_q_table = {str(state): values for state, values in self.q_table.items()}

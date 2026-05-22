@@ -28,7 +28,7 @@ def train_agent(episodes=500):
             total_reward += reward
             
             # 3. Agent learns: updates its Q-table
-            agent.learn(state, action, reward, next_state)
+            agent.learn(state, action, reward, next_state, done)
             
             # 4. Update the current state to the next state for the next iteration
             state = next_state
