@@ -59,7 +59,7 @@ class Crossing:
                 current_step_car_wait += 1 # count how many vehicles are waiting at the stop line
 
         for p in self.pedestrians:
-            is_ped_green = (self.light_state == 1)
+            is_ped_green = (self.light_state == 0)
             old_pos = p.position
             p.move(is_ped_green)
             if p.position == old_pos:
