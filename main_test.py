@@ -1,5 +1,5 @@
 import time
-from environment import Crossing
+from environment.crossing import Crossing
 
 def test_fixed_policy():
     """

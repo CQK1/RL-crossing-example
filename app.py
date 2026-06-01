@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
-from environment import Crossing
+from environment.crossing import Crossing
 from agent import QLearningAgent
 
 # Set page configuration and layout

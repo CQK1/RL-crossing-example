@@ -1,4 +1,4 @@
-from environment import Crossing
+from environment.crossing import Crossing
 from agent import QLearningAgent
 import json
 
