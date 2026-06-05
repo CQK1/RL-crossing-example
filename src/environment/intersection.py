@@ -1,5 +1,5 @@
 import random
-from entities import Vehicle, Pedestrian
+from src.entities.entities import Vehicle, Pedestrian
 
 class Intersection:
     def __init__(self):

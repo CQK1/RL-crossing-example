@@ -1,5 +1,6 @@
 import random
-from entities import Vehicle, Pedestrian
+from src.entities.entities import Vehicle, Pedestrian
+from src.generators.traffic_generator import TrafficGenerator
 
 class Crossing:
     def __init__(self):
@@ -13,6 +14,9 @@ class Crossing:
 
         self.ped_path_length = 5
         self.ped_stop_line = 2
+
+        # initialize the traffic generator
+        self.traffic_generator = TrafficGenerator(vehicle_rate= 0.3, pedestrain_rate= 0.2)
 
         self.reset()
 
