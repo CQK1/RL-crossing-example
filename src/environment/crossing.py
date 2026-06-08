@@ -47,10 +47,8 @@ class Crossing:
         if action == 1:
             self.light_state = 1 - self.light_state # switch light state
 
-        if random.random() < 0.3: # 30% chance of a new vehicle arriving
-            self.vehicles.append(Vehicle(start_pos=0))
-        if random.random() < 0.2: # 20% chance of a new pedestrian arriving
-            self.pedestrians.append(Pedestrian(start_pos=0))
+        self.vehicles.append(self.traffic_generator.generate_vehicle(start_pos=0))
+        self.pedestrians.append(self.traffic_generator.generate_pedastrains(start_pos=0))
 
         current_step_car_wait = 0
         current_step_ped_wait = 0

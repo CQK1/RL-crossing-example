@@ -6,12 +6,12 @@ class TrafficGenerator:
         self.vehicle_rate = vehicle_rate
         self.pedestrain_rate = pedestrain_rate
 
-    def generate_vehicle(self):
+    def generate_vehicle(self, start_pos=0):
         if random.random() < self.vehicle_rate:
-            return Vehicle(start_pos=0)
+            return Vehicle(start_pos)
         return None
     
-    def generate_pedastrains(self):
+    def generate_pedastrains(self, start_pos=0):
         if random.random() < self.vehicle_rate:
-            return Vehicle(start_pos=0)
+            return Pedestrian(start_pos)
         return None

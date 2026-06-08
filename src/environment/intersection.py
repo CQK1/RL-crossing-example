@@ -1,5 +1,6 @@
 import random
 from src.entities.entities import Vehicle, Pedestrian
+from src.generators.traffic_generator import TrafficGenerator
 
 class Intersection:
     def __init__(self):
@@ -13,6 +14,8 @@ class Intersection:
 
         self.ped_path_length = 5
         self.ped_stop_line = 2
+
+        self.traffic_generator = TrafficGenerator(vehicle_rate= 0.3, pedestrain_rate= 0.2)
         self.reset()
     
     def reset(self):
@@ -53,10 +56,10 @@ class Intersection:
         if action == 1:
             self.light_state = 1 - self.light_state
 
-        if random.random() < 0.2: self.vehicles["N"].append(Vehicle(start_pos=0))
-        if random.random() < 0.2: self.vehicles["S"].append(Vehicle(start_pos=0))
-        if random.random() < 0.2: self.vehicles["E"].append(Vehicle(start_pos=0))
-        if random.random() < 0.2: self.vehicles["W"].append(Vehicle(start_pos=0))
+        self.vehicles["N"].append(self.traffic_generator.generate_vehicle(start_pos=0))
+        self.vehicles["S"].append(self.traffic_generator.generate_vehicle(start_pos=0))
+        self.vehicles["E"].append(self.traffic_generator.generate_vehicle(start_pos=0))
+        self.vehicles["W"].append(self.traffic_generator.generate_vehicle(start_pos=0))
 
         current_ns_wait = 0
         current_ew_wait = 0
