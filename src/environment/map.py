@@ -1,18 +1,32 @@
 # src/environment/map.py
+import math
 from src.environment.lane import Lane
 from src.environment.intersection import Intersection
 
 class TrafficMap:
-    def __init__(self, map_length=300.0):
-        self.map_length = map_length # default length 300
-        self.lane = Lane(length=map_length) # let the length of the lane equal to map first
-        self.intersections = []  # list of intersection in the map
+    def __init__(self):
+        self.intersections = {}
+        self.lanes = []
         
-    def add_intersection(self, name, position):
-        """if the intersection is within the length of the map then add"""
-        if position < self.map_length:
-            intersection = Intersection(name, position)
-            self.intersections = sorted(self.intersections + [intersection], key=lambda x: x.position)
+    def add_intersection(self, node_id, x, y):
+        if node_id not in self.intersections:
+            self.intersections[node_id] = Intersection(node_id, x, y)
+
+    def add_line(self, from_node_id, to_node_id, speed_limit):
+        if from_node_id not in self.intersections or to_node_id not in self.intersections:
+            raise ValueError("Intersetions you typed do not exist, add them first.")
+        from_node = self.intersections[from_node_id]
+        to_node = self.intersections[to_node_id]
+
+        length = math.hypot(to_node.x - from_node.x, to_node.y - from_node.y)
+
+        new_lane = Lane(length = length, speed_limit = speed_limit)
+
+        from_node.outgoing_lanes.append(new_lane)
+        to_node.incoming_lanes.append(new_lane)
+
+        self.lanes.append(new_lane)
+        return new_lane
             
     def step(self, dt=1.0):
         """the time of the whole map changes"""
