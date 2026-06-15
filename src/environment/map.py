@@ -32,9 +32,13 @@ class TrafficMap:
         """the time of the whole map changes"""
         # goes through every intersection and notify the car the information of the intersections
         # assume a car only needs to consider the red light in front of it
-        for intersection in self.intersections:
-            self.lane.update_vehicles_physics(
-                dt=dt, 
-                stop_line=intersection.position - 2.0,  # let the stop line be 2 meters before the stop line
-                is_red=(intersection.light_state == 0)
-            )
+        for intersection in self.intersections.values():
+            is_red_light = (intersection.light_state == 0)
+            
+            # 【核心】：只让“流向当前路口”的进口车道去对齐这个路口的红绿灯和坐标
+            for lane in intersection.incoming_lanes:
+                lane.update_vehicles_physics(     # 1. 修正了单数拼写
+                    dt=dt, 
+                    stop_line=intersection.x - 2.0,  # 2. 修正了坐标属性为 .x
+                    is_red=is_red_light
+                )

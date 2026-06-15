@@ -1,16 +1,26 @@
-from environment.crossing import Crossing
-from agent import QLearningAgent
+# main.py
+import os
 import json
+from src.environment.network_traffic_env import NetworkTrafficEnv
+from src.agents.agent import QLearningAgent
 
 def train_agent(episodes=500):
-    env = Crossing()
+    target_node = "Node_A"
+    env = NetworkTrafficEnv(target_id=target_node)
+    
+    # ====== 核心：在这里（外部）动态配置路网拓扑 ======
+    env.traffic_map.add_intersection(target_node, x=150.0, y=0.0)
+    env.traffic_map.add_intersection("Start_Node", x=0.0, y=0.0)
+    env.traffic_map.add_line("Start_Node", target_node, speed_limit=13.89)
+    # ==================================================
+
     agent = QLearningAgent(alpha=0.1, gamma=0.9, epsilon=0.1)
 
-    agent.load_q_table("q_table.json")  # Load existing Q-table if available
+    table_path = "data/q_table/q_table.json"
+    best_table_path = "data/q_table/best_q_table.json"
+    agent.load_q_table(table_path) 
     
-    print("training...")
-
-    print(f"Initial Q-table size: {len(agent.q_table)} entries")
+    print("Training started with continuous Network Environment...")
 
     best_reward = float('-inf')
 
@@ -20,31 +30,28 @@ def train_agent(episodes=500):
         total_reward = 0
         
         while not done:
-            # 1. Agent chooses an action based on the current state
             action = agent.select_action(state)
             
-            # 2. Environment receives the action and returns the next state, reward, and done flag
-            next_state, reward, done = env.step(action)
+            # 包装成多路口支持的 action_dict 传给环境
+            action_dict = {target_node: action}
+            
+            next_state, reward, done = env.step(action_dict)
             total_reward += reward
             
-            # 3. Agent learns: updates its Q-table
             agent.learn(state, action, reward, next_state, done)
-            
-            # 4. Update the current state to the next state for the next iteration
             state = next_state
         
         if total_reward > best_reward:
             best_reward = total_reward
-            agent.save_q_table("q_table_best.json")  # Save the Q-table whenever we get a new best reward
+            os.makedirs(os.path.dirname(best_table_path), exist_ok=True)
+            agent.save_q_table(best_table_path)
             print(f"New best reward: {best_reward:.1f} points at episode {episode + 1}")
 
-        # Print progress every 100 episodes
         if (episode + 1) % 100 == 0:
             print(f"Episode {episode + 1}/{episodes} | Total Reward: {total_reward:.1f} | Q-Table Size: {len(agent.q_table)}")
 
-    agent.save_q_table("q_table.json")
-    print("Best reward achieved during training: {:.1f} points".format(best_reward))
+    agent.save_q_table(table_path)
+    print(f"Training complete. Best reward achieved: {best_reward:.1f} points")
 
 if __name__ == "__main__":
-    train_agent()
-
+    train_agent(episodes=500)

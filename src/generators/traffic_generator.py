@@ -1,5 +1,6 @@
 import random
-from src.entities.entities import Vehicle, Pedestrian
+from src.entities.pedestrian import Pedestrian
+from src.entities.vehicle import Vehicle
 
 class TrafficGenerator:
     def __init__(self, vehicle_rate=0.3, pedestrain_rate=0.2):

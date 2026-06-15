@@ -1,4 +1,4 @@
-from src.entities import Vehicle
+from src.entities.vehicle import Vehicle
 
 class Lane:
     def __init__(self, length = 150.0, speed_limit = 40):
@@ -6,7 +6,7 @@ class Lane:
         self.speed_limit = speed_limit
         self.vehicles = []
 
-    def update_vehicle_physics(self, dt = 1.0, stop_line = None, is_red = False):
+    def update_vehicles_physics(self, dt = 1.0, stop_line = None, is_red = False):
         """
         Update all the positions of the vehicles on the lane
         stop_line: where car stops
