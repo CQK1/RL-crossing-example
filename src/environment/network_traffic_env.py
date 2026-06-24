@@ -3,7 +3,7 @@ from src.environment.map import TrafficMap
 from src.generators.traffic_generator import TrafficGenerator
 
 class NetworkTrafficEnv:
-    def __init__(self, target_id = "Node_A"):
+    def __init__(self, target_id="Node_A"):
         self.traffic_map = TrafficMap()
         self.traffic_generator = TrafficGenerator()
         self.time_step = 0
@@ -11,12 +11,7 @@ class NetworkTrafficEnv:
 
     def get_state(self):
         """
-        collect the state of every intersection in the map
-        Then return it, example:
-        {
-            "Node_B": {"light_state": 0, "waiting_vehicles": 3},
-            "Node_C": {"light_state": 1, "waiting_vehicles": 0}
-        }
+        收集地图上每一个路口的完整状态
         """
         state_dict = {}
 
@@ -28,24 +23,12 @@ class NetworkTrafficEnv:
             state_dict[inter_id] = {
                 "light_state": intersection.light_state,
                 "waiting_vehicles": total_waiting_vehicles
-                # TODO: After adding pedestrains, calculate the amount that is waiting
-                # "waiting_pedestrians": ...
-        }
+            }
         
         return state_dict
-    
-    def get_flat_state(self):
-        """兼容旧版 QLearningAgent 的降维状态接口"""
-        full_state = self.get_state()
-        target_state = full_state[self.target_id]
-        
-        return {
-            "light_state": target_state["light_state"],
-            "waiting_vehicles": target_state["waiting_vehicles"],
-            "waiting_pedestrians": 0 # Phase 3 引入行人前暂时补 0
-        }
 
     def calculate_reward(self):
+        """所有受控路口的总排队惩罚之和，作为协同奖励"""
         total_penalty = 0.0
         for inter_id, intersection in self.traffic_map.intersections.items():
             for lane in intersection.incoming_lanes:
@@ -54,29 +37,36 @@ class NetworkTrafficEnv:
 
     def step(self, action_dict):
         """
-        action_dict: The dictionary that contains multiple actions for each intersections, like {"Node_B": 1, "Node_C": 0}
+        接收多路口动作字典，执行物理步进
+        action_dict: {"Node_A": 1, "Node_B": 0, "Node_C": 0}
         """
         self.time_step += 1
 
+        # 1. 更新所有路口的红绿灯
         for intersection_id, action in action_dict.items():
             if action == 1 and intersection_id in self.traffic_map.intersections:
                 self.traffic_map.intersections[intersection_id].toggle_light()
 
+        # 2. 修正车流生成漏洞：新车只允许从没有前驱节点（源头）的车道注入
         for lane in self.traffic_map.lanes:
-            new_car = self.traffic_generator.generate_vehicle()
-            if new_car:
-                lane.vehicles.append(new_car)
+            # 只有当车道的起点是 "Start_Node" 时，才允许生成新车注入系统
+            if lane.from_node_id == "Start_Node":
+                new_car = self.traffic_generator.generate_vehicle()
+                if new_car:
+                    lane.vehicles.append(new_car)
             
-        self.traffic_map.step(dt = 1.0)
+        # 3. 驱动整个地图的物理时钟
+        self.traffic_map.step(dt=1.0)
 
-        state = self.get_flat_state()
+        # 4. 多智能体架构：返回完整的、无损的全局状态字典
+        state = self.get_state()
         reward = self.calculate_reward()
         done = self.time_step >= 100
 
         return state, reward, done
     
     def reset(self):
-        """真正的 reset：不破坏外部搭建好的地图，只清空车辆和时间"""
+        """真正的多智能体重置：不返回单路口的扁平状态"""
         self.time_step = 0
         
         # 清空所有车道上的车辆
@@ -87,5 +77,5 @@ class NetworkTrafficEnv:
         for inter in self.traffic_map.intersections.values():
             inter.light_state = 0 
             
-        return self.get_flat_state()
-    
+        # 这里返回 None 即可，main.py 会自己显式调用 env.get_state() 获取初始状态
+        return None
