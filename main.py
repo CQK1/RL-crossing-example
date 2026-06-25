@@ -91,8 +91,15 @@ def train_agent(episodes=500):
         # 每 100 轮打印一次各个 Q-table 的探索状态大小
         if (episode + 1) % 100 == 0:
             status_msg = f"Episode {episode + 1}/{episodes} | Total reward: {total_reward:.1f} | Q-Table Size: "
-            sizes = [f"{node_id}: {len(agent.q_table)}" for node_id, agent in agents.items()]
-            print(status_msg + ", ".join(sizes))
+            stats_msg = " | Throughput: "
+            for node_id, agent in agents.items():
+                inter = env.traffic_map.intersections[node_id]
+                status_msg += f"{node_id}: {len(agent.q_table)} "
+                stats_msg += f"{node_id}: {inter.stats} "
+            print(status_msg + stats_msg)
+
+            for node_id in controlled_nodes:
+                env.traffic_map.intersections[node_id].reset_stats()
 
     # 训练结束，持久化所有智能体的最终决策表
     for node_id, agent in agents.items():

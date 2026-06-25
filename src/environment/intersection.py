@@ -9,9 +9,12 @@ class Intersection:
         self.x = x
         self.y = y
         self.light_state = 0
-
+        self.stats = {"straight": 0, "left": 0}
         self.incoming_lanes = []
         self.outgoing_lanes = []
 
     def toggle_light(self):
         self.light_state = 1 - self.light_state
+
+    def reset_stats(self):
+        self.stats = {"straight": 0, "left": 0}

@@ -47,14 +47,19 @@ class TrafficMap:
                     is_red=is_red_light
                 )
                 
-                # 【新增】：车辆跨路段交接逻辑 (Handoff)
-                # 如果有车驶出，并且当前路口有连向下一站的出口车道
-                if leaving_cars and len(intersection.outgoing_lanes) > 0:
-                    # 当前是简单直行路网，默认交给前方的第一条车道
-                    next_lane = intersection.outgoing_lanes[0]
+                # 车辆跨路段交接逻辑 (Handoff)
+                if leaving_cars:
                     for car in leaving_cars:
-                        # 重置车辆在新车道的相对起点坐标
-                        car.position = 0.0 
-                        # 保持原本的速度驶入下一路段
-                        next_lane.vehicles.append(car)
-                # 如果没有任何出口车道 (比如到了终点 Node_C)，离开的车就不再加入任何列表，直接作为 Sink Node 销毁
+                        if car.destination == f"{intersection.name}_left":
+                            intersection.stats["left"] += 1
+                            pass
+                        elif car.destination == intersection.name:
+                            intersection.stats["straight"] += 1
+                            pass
+                        elif len(intersection.outgoing_lanes) > 0:
+                            intersection.stats["straight"] += 1
+                            next_lane = intersection.outgoing_lanes[0]
+                            # 重置车辆在新车道的相对起点坐标
+                            car.position = 0.0 
+                            # 保持原本的速度驶入下一路段
+                            next_lane.vehicles.append(car)

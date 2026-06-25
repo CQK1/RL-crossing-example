@@ -1,7 +1,7 @@
 import random
 
 class Vehicle:
-    def __init__(self, start_pos = 0):
+    def __init__(self, start_pos = 0, destination = "Node_C"):
         # property of the car
         self.position = float(start_pos) # let this be the position of the head of the car
         self.length = random.uniform(4.0, 5.0)
@@ -10,6 +10,8 @@ class Vehicle:
         self.acceleration = 0.0 
 
         self.waiting_time = 0
+
+        self.destination = destination
     
     def move(self, is_green):
         if is_green:
