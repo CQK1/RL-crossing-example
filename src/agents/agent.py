@@ -12,8 +12,10 @@ class QLearningAgent:
         self.q_table = {}        # Q-table: the agent's memory, storing the expected rewards for each state-action pair
 
     def _get_state_key(self, state):
-        # Convert the state dictionary to a tuple to use as a key in the Q-table
-        return (state['light_state'], state['waiting_vehicles'], state['waiting_pedestrians'])
+        # 将 NumPy 数组转为整数标量，并提供默认值防止找不到键
+        vehicles = int(state['waiting_vehicles'][0]) if hasattr(state['waiting_vehicles'], '__len__') else int(state['waiting_vehicles'])
+        peds = int(state.get('waiting_pedestrians', 0))
+        return (state['light_state'], vehicles, peds)
     
     def _ensure_state_in_q_table(self, state):
         state_key = self._get_state_key(state)

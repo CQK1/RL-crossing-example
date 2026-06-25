@@ -1,13 +1,31 @@
 # src/environment/network_traffic_env.py
+import gymnasium as gym
+from gymnasium import spaces
+import numpy as np
 from src.environment.map import TrafficMap
 from src.generators.traffic_generator import TrafficGenerator
 
 class NetworkTrafficEnv:
-    def __init__(self, target_id="Node_A"):
+    def __init__(self, controlled_nodes):
+        super(NetworkTrafficEnv, self).__init__()
+
         self.traffic_map = TrafficMap()
         self.traffic_generator = TrafficGenerator()
         self.time_step = 0
-        self.target_id = target_id
+        self.controlled_nodes = controlled_nodes
+
+        #generate action spaces
+        self.action_space = spaces.Dict({
+            node_id: spaces.Discrete(2) for node_id in self.controlled_nodes
+        })
+
+        #generate observation spaces
+        self.observation_space = spaces.Dict({
+            node_id: spaces.Dict({
+                "light_state": spaces.Discrete(2),
+                "waiting_vehicles": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32)
+            }) for node_id in self.controlled_nodes
+        })
 
     def get_state(self):
         """
@@ -36,46 +54,45 @@ class NetworkTrafficEnv:
         return -total_penalty
 
     def step(self, action_dict):
-        """
-        接收多路口动作字典，执行物理步进
-        action_dict: {"Node_A": 1, "Node_B": 0, "Node_C": 0}
-        """
         self.time_step += 1
 
-        # 1. 更新所有路口的红绿灯
+        # 1. 执行动作
         for intersection_id, action in action_dict.items():
             if action == 1 and intersection_id in self.traffic_map.intersections:
                 self.traffic_map.intersections[intersection_id].toggle_light()
 
-        # 2. 修正车流生成漏洞：新车只允许从没有前驱节点（源头）的车道注入
+        # 2. 车辆生成与物理步进
         for lane in self.traffic_map.lanes:
-            # 只有当车道的起点是 "Start_Node" 时，才允许生成新车注入系统
             if lane.from_node_id == "Start_Node":
                 new_car = self.traffic_generator.generate_vehicle()
                 if new_car:
                     lane.vehicles.append(new_car)
-            
-        # 3. 驱动整个地图的物理时钟
+        
         self.traffic_map.step(dt=1.0)
 
-        # 4. 多智能体架构：返回完整的、无损的全局状态字典
-        state = self.get_state()
+        # 3. 收集标准返回值
+        observation = self.get_state()
         reward = self.calculate_reward()
-        done = self.time_step >= 100
+        
+        # Terminated 通常指任务成功或失败，Truncated 通常指时间到了
+        terminated = False 
+        truncated = self.time_step >= 300
+        
+        info = {}
 
-        return state, reward, done
+        return observation, reward, terminated, truncated, info
     
-    def reset(self):
-        """真正的多智能体重置：不返回单路口的扁平状态"""
+    def reset(self, seed=None, options=None):
         self.time_step = 0
         
-        # 清空所有车道上的车辆
+        # 清空物理环境
         for lane in self.traffic_map.lanes:
             lane.vehicles.clear() 
-            
-        # 重置所有路口的红绿灯状态
         for inter in self.traffic_map.intersections.values():
             inter.light_state = 0 
             
-        # 这里返回 None 即可，main.py 会自己显式调用 env.get_state() 获取初始状态
-        return None
+        # 获取初始状态并确保格式与 observation_space 一致
+        observation = self.get_state()
+        info = {} # 可以存放额外的调试信息
+        
+        return observation, info

@@ -43,5 +43,17 @@ class Lane:
                 car.speed = self.speed_limit
                 
         # 5. remove the car if they are out of the line
-        self.vehicles = [car for car in self.vehicles if car.position < self.length]
+        staying_vehicles = []
+        leaving_vehicles = []
+        
+        for car in self.vehicles:
+            if car.position < self.length:
+                staying_vehicles.append(car)
+            else:
+                leaving_vehicles.append(car)
+                
+        # Update vehicles
+        self.vehicles = staying_vehicles
+        
+        return leaving_vehicles
 
