@@ -10,7 +10,7 @@ class Vehicle:
         self.acceleration = 0.0 
 
         self.waiting_time = 0
-
+        # assign destination when car is generated
         self.destination = destination
     
     def move(self, is_green):

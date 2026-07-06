@@ -12,6 +12,7 @@ class NetworkTrafficEnv:
         self.traffic_map = TrafficMap()
         self.traffic_generator = TrafficGenerator()
         self.time_step = 0
+        self.dt = 1.0
         self.controlled_nodes = controlled_nodes
 
         #generate action spaces
@@ -29,7 +30,7 @@ class NetworkTrafficEnv:
 
     def get_state(self):
         """
-        收集地图上每一个路口的完整状态
+        Get the state of each intersection in the map
         """
         state_dict = {}
 
@@ -46,11 +47,11 @@ class NetworkTrafficEnv:
         return state_dict
 
     def calculate_reward(self):
-        """所有受控路口的总排队惩罚之和，作为协同奖励"""
+        """All the controlled intersections and cars that are waiting as total sum"""
         total_penalty = 0.0
         for inter_id, intersection in self.traffic_map.intersections.items():
             for lane in intersection.incoming_lanes:
-                total_penalty += sum(1.0 for car in lane.vehicles if car.speed == 0.0)
+                total_penalty += sum(car.waiting_time for car in lane.vehicles if car.speed == 0.0)
         return -total_penalty
 
     def step(self, action_dict):
@@ -58,8 +59,8 @@ class NetworkTrafficEnv:
 
         # 1. 执行动作
         for intersection_id, action in action_dict.items():
-            if action == 1 and intersection_id in self.traffic_map.intersections:
-                self.traffic_map.intersections[intersection_id].toggle_light()
+            if intersection_id in self.traffic_map.intersections:
+                self.traffic_map.intersections[intersection_id].apply_action(action, dt=self.dt)
 
         # 2. 车辆生成与物理步进
         for lane in self.traffic_map.lanes:
@@ -68,9 +69,9 @@ class NetworkTrafficEnv:
                 if new_car:
                     lane.vehicles.append(new_car)
         
-        self.traffic_map.step(dt=1.0)
+        self.traffic_map.step(dt=self.dt)
 
-        # 3. 收集标准返回值
+        # 3. return reward
         observation = self.get_state()
         reward = self.calculate_reward()
         
@@ -85,7 +86,7 @@ class NetworkTrafficEnv:
     def reset(self, seed=None, options=None):
         self.time_step = 0
         
-        # 清空物理环境
+        # clear the environment
         for lane in self.traffic_map.lanes:
             lane.vehicles.clear() 
         for inter in self.traffic_map.intersections.values():

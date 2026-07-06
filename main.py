@@ -68,7 +68,7 @@ def train_agent(episodes=500):
             done = terminated or truncated 
             total_reward += reward
             
-            # 智能体学习
+            # agent learning
             for node_id in controlled_nodes:
                 agents[node_id].learn(
                     full_state[node_id], 

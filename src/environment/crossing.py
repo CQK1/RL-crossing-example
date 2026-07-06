@@ -1,5 +1,5 @@
 import random
-from src.entities.entities import Vehicle, Pedestrian
+from src.entities.pedestrian import Vehicle, Pedestrian
 from src.generators.traffic_generator import TrafficGenerator
 
 class Crossing:

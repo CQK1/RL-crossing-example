@@ -32,7 +32,7 @@ class TrafficMap:
         return new_lane
             
 
-    def step(self, dt=1.0):
+    def step(self, dt=0.1):
         """the time of the whole map changes"""
         # goes through every intersection and notify the car the information of the intersections
         for intersection in self.intersections.values():
