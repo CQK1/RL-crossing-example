@@ -55,21 +55,30 @@ class Intersection:
         """
         Process the action
         """
-        if self.phase_timer < self.min_green:
-            final_action = 0
-        if self.phase_timer >= self.min_green:
-            final_action = 1
-        else:
-            final_action = rl_action
-        if final_action == 1:
-            # + 1 and then mod to achieve 0->1->2->3->0 cycle
-            self.current_phase_index = (self.current_phase_index + 1) % len(self.phases)
+        requested_change = (rl_action != self.current_phase_index)
+
+         # 1. Hard Rule: Max Green constraint (Force a change to prevent starvation)
+        if self.phase_timer >= self.max_green:
+            # Force transition to the next logical phase in sequence if we exceed max green
+            next_phase = (self.current_phase_index + 1) % len(self.phases)
+            self.current_phase_index = next_phase
             self.current_phase = self.phases[self.current_phase_index]
-            self.phase_timer = 0.0  # timer reset to 0
-            
-            # Yellow light in the future
+            self.phase_timer = 0.0
+            return self.current_phase
+
+        # 2. Check if the agent wants to switch the phase
+        if requested_change:
+            # Check if current phase has been active long enough
+            if self.phase_timer >= self.min_green:
+                # Allowed to switch directly to the chosen target phase
+                self.current_phase_index = rl_action
+                self.current_phase = self.phases[self.current_phase_index]
+                self.phase_timer = 0.0
+            else:
+                # Forced to keep current phase because min_green is not satisfied
+                self.phase_timer += dt
         else:
-            # Keep current phase, count the timer
+            # Agent decided to keep the current phase, increment the timer
             self.phase_timer += dt
 
         return self.current_phase

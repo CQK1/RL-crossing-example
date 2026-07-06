@@ -17,14 +17,17 @@ class NetworkTrafficEnv:
 
         #generate action spaces
         self.action_space = spaces.Dict({
-            node_id: spaces.Discrete(2) for node_id in self.controlled_nodes
+            node_id: spaces.Discrete(4) for node_id in self.controlled_nodes
         })
 
         #generate observation spaces
         self.observation_space = spaces.Dict({
             node_id: spaces.Dict({
-                "light_state": spaces.Discrete(2),
-                "waiting_vehicles": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32)
+                "current_phase": spaces.Discrete(4),
+                "queue_ns_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ns_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ew_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ew_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32)
             }) for node_id in self.controlled_nodes
         })
 
@@ -35,13 +38,36 @@ class NetworkTrafficEnv:
         state_dict = {}
 
         for inter_id, intersection in self.traffic_map.intersections.items():
-            total_waiting_vehicles = 0
+            ns_straight_count = 0
+            ns_left_count = 0
+            ew_straight_count = 0
+            ew_left_count = 0
+
             for lane in intersection.incoming_lanes:
-                total_waiting_vehicles += sum(1 for car in lane.vehicles if car.speed == 0.0)
+                # 判断当前车道是南北向还是东西向
+                # 规则：如果来源节点名称包含 North 或 South，则为南北向；否则（如 Start_Node, Node_A 等）为东西向
+                is_ns_lane = 'North' in str(lane.from_node_id) or 'South' in str(lane.from_node_id)
+                for car in lane.vehicles:
+                    if car.speed == 0.0:  # 只统计停下的车辆
+                        is_left_turn = str(car.destination).endswith("_left")
+                        
+                        if is_ns_lane:
+                            if is_left_turn:
+                                ns_left_count += 1
+                            else:
+                                ns_straight_count += 1
+                        else:
+                            if is_left_turn:
+                                ew_left_count += 1
+                            else:
+                                ew_straight_count += 1
 
             state_dict[inter_id] = {
-                "light_state": intersection.light_state,
-                "waiting_vehicles": total_waiting_vehicles
+                "current_phase": intersection.current_phase_index,
+                "queue_ns_straight": ns_straight_count,
+                "queue_ns_left": ns_left_count,
+                "queue_ew_straight": ew_straight_count,
+                "queue_ew_left": ew_left_count
             }
         
         return state_dict

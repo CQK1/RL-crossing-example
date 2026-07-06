@@ -12,10 +12,14 @@ class QLearningAgent:
         self.q_table = {}        # Q-table: the agent's memory, storing the expected rewards for each state-action pair
 
     def _get_state_key(self, state):
-        # 将 NumPy 数组转为整数标量，并提供默认值防止找不到键
-        vehicles = int(state['waiting_vehicles'][0]) if hasattr(state['waiting_vehicles'], '__len__') else int(state['waiting_vehicles'])
-        peds = int(state.get('waiting_pedestrians', 0))
-        return (state['light_state'], vehicles, peds)
+        # 提取新的详细排队状态作为 Q-Table 的键
+        phase = int(state.get('current_phase', 0))
+        ns_s = int(state.get('queue_ns_straight', 0))
+        ns_l = int(state.get('queue_ns_left', 0))
+        ew_s = int(state.get('queue_ew_straight', 0))
+        ew_l = int(state.get('queue_ew_left', 0))
+        
+        return (phase, ns_s, ns_l, ew_s, ew_l)
     
     def _ensure_state_in_q_table(self, state):
         state_key = self._get_state_key(state)
