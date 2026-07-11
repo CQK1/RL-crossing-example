@@ -2,6 +2,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from stable_baselines3 import DQN
 from src.environment.map import TrafficMap
 from src.generators.traffic_generator import TrafficGenerator
 
