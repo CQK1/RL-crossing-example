@@ -1,11 +1,73 @@
-# main.py
 import os
-import json
+import numpy as np
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.callbacks import BaseCallback  # Import SB3's callback base class
 from src.environment.network_traffic_env import NetworkTrafficEnv
-from src.agents.agent import QLearningAgent
 
-def train_agent(episodes=500):
+class TrafficLoggingCallback(BaseCallback):
+    """
+    Custom callback for tracking and logging traffic metrics at the end of each episode.
+    """
+    def __init__(self, controlled_nodes, q_table_dir="data/q_table", verbose=0):
+        super(TrafficLoggingCallback, self).__init__(verbose)
+        self.controlled_nodes = controlled_nodes
+        self.q_table_dir = q_table_dir
+        self.best_reward = float('-inf')
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        # Check if the episode has ended (dones is True in VecEnv)
+        # DummyVecEnv wraps the "done" flags of multiple environments into an array; we retrieve the first one here
+        if self.locals.get("dones")[0]:
+            self.episode_count += 1
+            
+            # 1. Extract total reward for the current episode
+            # SB3's Monitor wrapper automatically stores the latest episode's true reward and length into "infos"
+            info = self.locals.get("infos")[0]
+            if "episode" in info:
+                episode_reward = info["episode"]["r"]
+                episode_length = info["episode"]["l"]
+            else:
+                # Fallback option: if the Monitor was not successfully triggered, retrieve directly from the environment
+                episode_reward = self.training_env.get_attr("time_step")[0] # This is for structural demonstration only
+                episode_reward = 0.0 # In practice, the Monitor's data takes precedence
+
+            # 2. Extract throughput statistics for each intersection from the unwrapped real environment
+            # VecEnv requires using env_method or get_attr to access properties of the underlying environment
+            unwrapped_env = self.training_env.envs[0].unwrapped # Retrieve the first pure, unwrapped environment inside DummyVecEnv
+            traffic_map = unwrapped_env.traffic_map
+
+            # 3. Construct an informative log string
+            status_msg = f"⏱️ Episode {self.episode_count} | Total Reward: {episode_reward:.1f} | Length: {episode_length} \n"
+            stats_msg = "📊 Throughput -> "
+            
+            for node_id in self.controlled_nodes:
+                intersection = traffic_map.intersections[node_id]
+                stats_msg += f"{node_id}: {intersection.stats} "
+            
+            print("-" * 80)
+            print(status_msg + stats_msg)
+
+            # 4. Track and save the historical best model (Best Reward)
+            if episode_reward > self.best_reward:
+                self.best_reward = episode_reward
+                print(f"🔥 New Best Reward Broken: {self.best_reward:.1f}! Saving best model...")
+                best_model_path = os.path.join(self.q_table_dir, "best_ppo_model")
+                self.model.save(best_model_path)
+            
+            print("-" * 80)
+
+            # 5. Reset throughput counters for each intersection to prepare for the next episode
+            for node_id in self.controlled_nodes:
+                traffic_map.intersections[node_id].reset_stats()
+
+        return True
+
+
+def train_agent(timesteps=500):
     controlled_nodes = ["Node_A", "Node_B", "Node_C"]
+    
     env = NetworkTrafficEnv(controlled_nodes=controlled_nodes)
         
     node_positions = {
@@ -16,9 +78,9 @@ def train_agent(episodes=500):
     }
 
     road_segments = [
-        {"from": "Start_Node", "to": "Node_A", "speed_limit": 13.89},  # 13.89 m/s (~50 km/h)
-        {"from": "Node_A",     "to": "Node_B", "speed_limit": 11.11},  # 11.11 m/s (~40 km/h)
-        {"from": "Node_B",     "to": "Node_C", "speed_limit": 8.33}   # 8.33 m/s  (~30 km/h)
+        {"from": "Start_Node", "to": "Node_A", "speed_limit": 13.89},
+        {"from": "Node_A",     "to": "Node_B", "speed_limit": 11.11},
+        {"from": "Node_B",     "to": "Node_C", "speed_limit": 8.33}
     ]
 
     for node_id, x_coord in node_positions.items():
@@ -31,82 +93,27 @@ def train_agent(episodes=500):
             speed_limit = segment["speed_limit"]
         )
 
-    agents = {}
-
-    for node_id in controlled_nodes:
-        agents[node_id] = QLearningAgent()
-
+    check_env(env, warn=True)
+    
     q_table_dir = "data/q_table"
     os.makedirs(q_table_dir, exist_ok=True)
 
-    for node_id, agent in agents.items():
-        table_path = os.path.join(q_table_dir, f"q_table_{node_id}.json")
-        agent.load_q_table(table_path)
+    print(f"Controlled nodes in the road network: {controlled_nodes}")
+    print("Starting model training using Stable-Baselines3...")
 
- 
-    print(f"All nodes that are under control{controlled_nodes}")
-    print("Start...")
-    
-    best_reward = float('-inf')
+    # Initialize the model
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./traffic_tensorboard/")
 
-    for episode in range(episodes):
-        # reset 现在返回两个值
-        full_state, info = env.reset()
-        
-        done = False
-        total_reward = 0
-        
-        while not done:
-            action_dict = {}
-            for node_id in controlled_nodes:
-                action_dict[node_id] = agents[node_id].select_action(full_state[node_id])
-            
-            # step 现在返回五个值
-            next_full_state, reward, terminated, truncated, info = env.step(action_dict)
-            
-            # 只要触发其中一个，本轮结束
-            done = terminated or truncated 
-            total_reward += reward
-            
-            # agent learning
-            for node_id in controlled_nodes:
-                agents[node_id].learn(
-                    full_state[node_id], 
-                    action_dict[node_id], 
-                    reward, 
-                    next_full_state[node_id], 
-                    done
-                )
-            
-            full_state = next_full_state
-        
-        # Save the best reward
-        if total_reward > best_reward:
-            best_reward = total_reward
-            for node_id, agent in agents.items():
-                best_path = os.path.join(q_table_dir, f"best_q_table_{node_id}.json")
-                agent.save_q_table(best_path)
-            print(f"Best reward: {best_reward:.1f}, happened at {episode + 1}")
+    # Instantiate our custom logging and tracking callback
+    logging_callback = TrafficLoggingCallback(controlled_nodes=controlled_nodes, q_table_dir=q_table_dir)
 
-        # 每 100 轮打印一次各个 Q-table 的探索状态大小
-        if (episode + 1) % 100 == 0:
-            status_msg = f"Episode {episode + 1}/{episodes} | Total reward: {total_reward:.1f} | Q-Table Size: "
-            stats_msg = " | Throughput: "
-            for node_id, agent in agents.items():
-                inter = env.traffic_map.intersections[node_id]
-                status_msg += f"{node_id}: {len(agent.q_table)} "
-                stats_msg += f"{node_id}: {inter.stats} "
-            print(status_msg + stats_msg)
+    # Pass the callback function into the learn method
+    model.learn(total_timesteps=timesteps, callback=logging_callback)
 
-            for node_id in controlled_nodes:
-                env.traffic_map.intersections[node_id].reset_stats()
-
-    # 训练结束，持久化所有智能体的最终决策表
-    for node_id, agent in agents.items():
-        final_path = os.path.join(q_table_dir, f"q_table_{node_id}.json")
-        agent.save_q_table(final_path)
-        
-    print(f"Finished. Best rewards: {best_reward:.1f}")
+    # Save the final policy weights
+    os.makedirs("models", exist_ok=True)
+    model.save("models/ppo_traffic_model")
+    print("Training complete! The final model has been saved.")
 
 if __name__ == "__main__":
-    train_agent(episodes=500)
+    train_agent(timesteps=500)

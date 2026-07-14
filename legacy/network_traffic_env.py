@@ -1,10 +1,12 @@
+# src/environment/network_traffic_env.py
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from stable_baselines3 import DQN
 from src.environment.map import TrafficMap
 from src.generators.traffic_generator import TrafficGenerator
 
-class NetworkTrafficEnv(gym.Env): # Must inherit from gym.Env
+class NetworkTrafficEnv:
     def __init__(self, controlled_nodes):
         super(NetworkTrafficEnv, self).__init__()
 
@@ -13,36 +15,43 @@ class NetworkTrafficEnv(gym.Env): # Must inherit from gym.Env
         self.time_step = 0
         self.dt = 1.0
         self.controlled_nodes = controlled_nodes
-        self.num_nodes = len(controlled_nodes)
 
-        # Dynamically scaled action space: native support for MultiDiscrete to avoid exponential action space growth
-        # For example, 3 intersections would be [4, 4, 4]; even if expanded to 10 intersections, it is merely an array of length 10.
-        self.action_space = spaces.MultiDiscrete([4] * self.num_nodes)
+        #generate action spaces
+        self.action_space = spaces.Dict({
+            node_id: spaces.Discrete(4) for node_id in self.controlled_nodes
+        })
 
-        # Observation space must be flattened into a 1D array for the neural network to process (Box space)
-        # 5 features per intersection (current phase + queue lengths of 4 directions), total length = num_nodes * 5
-        self.observation_space = spaces.Box(
-            low=0, high=500, shape=(self.num_nodes * 5,), dtype=np.float32
-        )
+        #generate observation spaces
+        self.observation_space = spaces.Dict({
+            node_id: spaces.Dict({
+                "current_phase": spaces.Discrete(4),
+                "queue_ns_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ns_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ew_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
+                "queue_ew_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32)
+            }) for node_id in self.controlled_nodes
+        })
 
     def get_state(self):
         """
-        Get the state and assemble it into a 1D NumPy array suitable for neural network input.
+        Get the state of each intersection in the map
         """
-        obs = []
+        state_dict = {}
 
-        for node_id in self.controlled_nodes:
-            intersection = self.traffic_map.intersections[node_id]
+        for inter_id, intersection in self.traffic_map.intersections.items():
             ns_straight_count = 0
             ns_left_count = 0
             ew_straight_count = 0
             ew_left_count = 0
 
             for lane in intersection.incoming_lanes:
+                # 判断当前车道是南北向还是东西向
+                # 规则：如果来源节点名称包含 North 或 South，则为南北向；否则（如 Start_Node, Node_A 等）为东西向
                 is_ns_lane = 'North' in str(lane.from_node_id) or 'South' in str(lane.from_node_id)
                 for car in lane.vehicles:
-                    if car.speed == 0.0:
+                    if car.speed == 0.0:  # 只统计停下的车辆
                         is_left_turn = str(car.destination).endswith("_left")
+                        
                         if is_ns_lane:
                             if is_left_turn:
                                 ns_left_count += 1
@@ -54,37 +63,33 @@ class NetworkTrafficEnv(gym.Env): # Must inherit from gym.Env
                             else:
                                 ew_straight_count += 1
 
-            # Append the features of a single intersection to the list sequentially
-            obs.extend([
-                intersection.current_phase_index,
-                ns_straight_count,
-                ns_left_count,
-                ew_straight_count,
-                ew_left_count
-            ])
+            state_dict[inter_id] = {
+                "current_phase": intersection.current_phase_index,
+                "queue_ns_straight": ns_straight_count,
+                "queue_ns_left": ns_left_count,
+                "queue_ew_straight": ew_straight_count,
+                "queue_ew_left": ew_left_count
+            }
         
-        # Return a float32 numpy array, which is a standard requirement for Stable-Baselines3 (SB3)
-        return np.array(obs, dtype=np.float32)
+        return state_dict
 
     def calculate_reward(self):
-        """Calculate the total penalty of the entire road network."""
+        """All the controlled intersections and cars that are waiting as total sum"""
         total_penalty = 0.0
         for inter_id, intersection in self.traffic_map.intersections.items():
             for lane in intersection.incoming_lanes:
                 total_penalty += sum(car.waiting_time for car in lane.vehicles if car.speed == 0.0)
         return -total_penalty
 
-    def step(self, action_array):
-        # The action_array provided by SB3 is an array like [0, 2, 1], corresponding to the decisions for each intersection
+    def step(self, action_dict):
         self.time_step += 1
 
-        # 1. Iterate through and execute the actions for each intersection
-        for idx, node_id in enumerate(self.controlled_nodes):
-            action = action_array[idx]
-            if node_id in self.traffic_map.intersections:
-                self.traffic_map.intersections[node_id].apply_action(action, dt=self.dt)
+        # 1. 执行动作
+        for intersection_id, action in action_dict.items():
+            if intersection_id in self.traffic_map.intersections:
+                self.traffic_map.intersections[intersection_id].apply_action(action, dt=self.dt)
 
-        # 2. Vehicle generation and physics stepping
+        # 2. 车辆生成与物理步进
         for lane in self.traffic_map.lanes:
             if lane.from_node_id == "Start_Node":
                 new_car = self.traffic_generator.generate_vehicle()
@@ -93,26 +98,29 @@ class NetworkTrafficEnv(gym.Env): # Must inherit from gym.Env
         
         self.traffic_map.step(dt=self.dt)
 
-        # 3. Collect environment feedback
+        # 3. return reward
         observation = self.get_state()
         reward = self.calculate_reward()
         
+        # Terminated 通常指任务成功或失败，Truncated 通常指时间到了
         terminated = False 
-        truncated = self.time_step >= 300 # Episode step limit
+        truncated = self.time_step >= 300
+        
         info = {}
 
         return observation, reward, terminated, truncated, info
     
     def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
         self.time_step = 0
         
+        # clear the environment
         for lane in self.traffic_map.lanes:
             lane.vehicles.clear() 
         for inter in self.traffic_map.intersections.values():
             inter.light_state = 0 
             
+        # 获取初始状态并确保格式与 observation_space 一致
         observation = self.get_state()
-        info = {}
+        info = {} # 可以存放额外的调试信息
         
         return observation, info
