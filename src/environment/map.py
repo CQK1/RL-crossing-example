@@ -60,26 +60,32 @@ class TrafficMap:
             # Only update incoming lanes flowing into the current intersection to align with its signals
             for lane in intersection.incoming_lanes:
                 
-                # Define a closure function to determine if a specific vehicle is facing a red light
-                def check_red_light_for_car(car):
-                    # Parse the movement intention from the vehicle's destination
-                    destination = str(car.destination).lower()
-                    if destination.endswith("_left"):
-                        movement = "left"
-                    elif destination.endswith("_right"):
-                        movement = "right"
-                    elif destination.endswith("_uturn"):
-                        movement = "u_turn"
-                    else:
-                        movement = "straight"
-                        
-                    # Query whether the current phase of the intersection permits the vehicle's movement
-                    is_allowed = intersection.is_movement_allowed(
-                        approach_direction=lane.approach_direction,
-                        movement_type=movement
-                    )
-                    # If allowed is False, it translates to a red light (True) for the vehicle physical simulation
-                    return not is_allowed 
+                # 【核心修复点】：如果流入的目标节点是一个 Exit 驶出节点，代表没有交通灯，直接永远放行（永远绿灯）
+                # 这样车辆才能开到终点，从而在离开车道时被正常垃圾回收，不会造成内存和计算堆积！
+                if "exit" in str(intersection.name).lower():
+                    def check_red_light_for_car(car):
+                        return False
+                else:
+                    # 正常的十字路口，查询信号灯规则
+                    def check_red_light_for_car(car):
+                        # Parse the movement intention from the vehicle's destination
+                        destination = str(car.destination).lower()
+                        if destination.endswith("_left"):
+                            movement = "left"
+                        elif destination.endswith("_right"):
+                            movement = "right"
+                        elif destination.endswith("_uturn"):
+                            movement = "u_turn"
+                        else:
+                            movement = "straight"
+                            
+                        # Query whether the current phase of the intersection permits the vehicle's movement
+                        is_allowed = intersection.is_movement_allowed(
+                            approach_direction=lane.approach_direction,
+                            movement_type=movement
+                        )
+                        # If allowed is False, it translates to a red light (True) for the vehicle physical simulation
+                        return not is_allowed 
 
                 # Pass the evaluation function to the vehicle physics engine for autonomous checking
                 leaving_cars = lane.update_vehicles_physics(
