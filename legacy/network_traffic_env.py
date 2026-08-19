@@ -1,126 +1,133 @@
-# src/environment/network_traffic_env.py
+import os
+import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
-import numpy as np
-from stable_baselines3 import DQN
 from src.environment.map import TrafficMap
 from src.generators.traffic_generator import TrafficGenerator
+from src.data_reader import TrafficDataReader
 
-class NetworkTrafficEnv:
-    def __init__(self, controlled_nodes):
+try:
+    from src.generators.poisson_process import InhomogeneousPoissonProcess
+except ImportError:
+    from src.generators.traffic_generator import InhomogeneousPoissonProcess
+
+class NetworkTrafficEnv(gym.Env):
+    def __init__(self, data_file_path=None):
         super(NetworkTrafficEnv, self).__init__()
+        self.dt = 1.0          
+        self.time_step = 0     
+
+        if data_file_path is None:
+            data_file_path = "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx"
+            if not os.path.exists(data_file_path):
+                data_file_path = os.path.join("data", "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx")
+        
+        self.data_reader = TrafficDataReader(data_file_path)
+        self.traffic_data = self.data_reader.load_data()
+        
+        self.poisson_engine = InhomogeneousPoissonProcess(self.traffic_data, cyclic=True)
+        self.traffic_generator = TrafficGenerator(rate_model=self.poisson_engine)
 
         self.traffic_map = TrafficMap()
-        self.traffic_generator = TrafficGenerator()
-        self.time_step = 0
-        self.dt = 1.0
-        self.controlled_nodes = controlled_nodes
+        self.controlled_nodes = ["Mayor_Magrath"]
+        
+        self.action_space = spaces.MultiDiscrete([4])
+        self.observation_space = spaces.Box(low=0, high=500, shape=(5,), dtype=np.float32)
 
-        #generate action spaces
-        self.action_space = spaces.Dict({
-            node_id: spaces.Discrete(4) for node_id in self.controlled_nodes
-        })
-
-        #generate observation spaces
-        self.observation_space = spaces.Dict({
-            node_id: spaces.Dict({
-                "current_phase": spaces.Discrete(4),
-                "queue_ns_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
-                "queue_ns_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
-                "queue_ew_straight": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32),
-                "queue_ew_left": spaces.Box(low=0, high=100, shape=(1,), dtype=np.int32)
-            }) for node_id in self.controlled_nodes
-        })
+        self.traffic_map.add_intersection("Mayor_Magrath", 0.0, 0.0)
+        
+        spawns = {"North": (0, 200), "South": (0, -200), "East": (200, 0), "West": (-200, 0)}
+        for dir_name, (x, y) in spawns.items():
+            spawn_node = f"{dir_name}_Spawn"
+            exit_node = f"{dir_name}_Exit"
+            self.traffic_map.add_intersection(spawn_node, x, y)
+            self.traffic_map.add_intersection(exit_node, x * 2, y * 2) 
+            self.traffic_map.add_line(spawn_node, "Mayor_Magrath", speed_limit=15.0)
+            self.traffic_map.add_line("Mayor_Magrath", exit_node, speed_limit=15.0)
 
     def get_state(self):
-        """
-        Get the state of each intersection in the map
-        """
-        state_dict = {}
+        obs = []
+        intersection = self.traffic_map.intersections["Mayor_Magrath"]
+        ns_straight_count, ns_left_count = 0, 0
+        ew_straight_count, ew_left_count = 0, 0
 
-        for inter_id, intersection in self.traffic_map.intersections.items():
-            ns_straight_count = 0
-            ns_left_count = 0
-            ew_straight_count = 0
-            ew_left_count = 0
+        for lane in intersection.incoming_lanes:
+            is_ns_lane = lane.approach_direction in ["North", "South"]
+            for car in lane.vehicles:
+                if car.speed <= 0.1:
+                    is_left_turn = str(car.destination).endswith("_left")
+                    if is_ns_lane:
+                        if is_left_turn: ns_left_count += 1
+                        else: ns_straight_count += 1
+                    else:
+                        if is_left_turn: ew_left_count += 1
+                        else: ew_straight_count += 1
 
-            for lane in intersection.incoming_lanes:
-                # 判断当前车道是南北向还是东西向
-                # 规则：如果来源节点名称包含 North 或 South，则为南北向；否则（如 Start_Node, Node_A 等）为东西向
-                is_ns_lane = 'North' in str(lane.from_node_id) or 'South' in str(lane.from_node_id)
-                for car in lane.vehicles:
-                    if car.speed == 0.0:  # 只统计停下的车辆
-                        is_left_turn = str(car.destination).endswith("_left")
-                        
-                        if is_ns_lane:
-                            if is_left_turn:
-                                ns_left_count += 1
-                            else:
-                                ns_straight_count += 1
-                        else:
-                            if is_left_turn:
-                                ew_left_count += 1
-                            else:
-                                ew_straight_count += 1
-
-            state_dict[inter_id] = {
-                "current_phase": intersection.current_phase_index,
-                "queue_ns_straight": ns_straight_count,
-                "queue_ns_left": ns_left_count,
-                "queue_ew_straight": ew_straight_count,
-                "queue_ew_left": ew_left_count
-            }
-        
-        return state_dict
+        obs.extend([
+            intersection.current_phase_index,
+            ns_straight_count, ns_left_count,
+            ew_straight_count, ew_left_count
+        ])
+        return np.array(obs, dtype=np.float32)
 
     def calculate_reward(self):
-        """All the controlled intersections and cars that are waiting as total sum"""
-        total_penalty = 0.0
-        for inter_id, intersection in self.traffic_map.intersections.items():
-            for lane in intersection.incoming_lanes:
-                total_penalty += sum(car.waiting_time for car in lane.vehicles if car.speed == 0.0)
-        return -total_penalty
-
-    def step(self, action_dict):
-        self.time_step += 1
-
-        # 1. 执行动作
-        for intersection_id, action in action_dict.items():
-            if intersection_id in self.traffic_map.intersections:
-                self.traffic_map.intersections[intersection_id].apply_action(action, dt=self.dt)
-
-        # 2. 车辆生成与物理步进
-        for lane in self.traffic_map.lanes:
-            if lane.from_node_id == "Start_Node":
-                new_car = self.traffic_generator.generate_vehicle()
-                if new_car:
-                    lane.vehicles.append(new_car)
+        queue_length = 0
+        intersection = self.traffic_map.intersections["Mayor_Magrath"]
+        for lane in intersection.incoming_lanes:
+            for car in lane.vehicles:
+                if car.speed <= 0.1:
+                    queue_length += 1
         
+        # 强制锁死：哪怕堵满1000辆车，单步最多只扣 200 分！彻底消灭天文数字
+        penalty = min(queue_length, 200)
+        return float(-penalty)
+
+    def step(self, action_array):
+        action = action_array[0]
+        self.traffic_map.intersections["Mayor_Magrath"].apply_action(action, dt=self.dt)
+
+        new_entities_dict = self.traffic_generator.generate_entities(float(self.time_step))
+        
+        for lane in self.traffic_map.lanes:
+            if lane.to_node_id == "Mayor_Magrath":
+                direction = lane.approach_direction
+                entities_to_add = new_entities_dict.get(direction, [])
+                if entities_to_add:
+                    if len(lane.vehicles) < 40:
+                        lane.vehicles.extend(entities_to_add)
+        
+        for direction in new_entities_dict.keys():
+            new_entities_dict[direction] = []
+
         self.traffic_map.step(dt=self.dt)
 
-        # 3. return reward
         observation = self.get_state()
         reward = self.calculate_reward()
-        
-        # Terminated 通常指任务成功或失败，Truncated 通常指时间到了
-        terminated = False 
-        truncated = self.time_step >= 300
-        
-        info = {}
 
-        return observation, reward, terminated, truncated, info
-    
-    def reset(self, seed=None, options=None):
-        self.time_step = 0
+        self.time_step += 1
+        terminated = False 
+        truncated = self.time_step >= 86400 
         
-        # clear the environment
+        # 【终极防丢输出】直接在环境里打印，不走 SB3 回调，SB3 的 reset 就拿我们没办法了！
+        if terminated or truncated:
+            stats = self.traffic_map.intersections["Mayor_Magrath"].stats
+            print(f"\n{'='*60}")
+            print(f"🏁 [ENV INTERNAL] Episode Done! 86400 seconds passed.")
+            print(f"📊 Real Throughput: {stats}")
+            print(f"{'='*60}\n")
+
+        info = {}
+        return observation, reward, terminated, truncated, info
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.time_step = 0
         for lane in self.traffic_map.lanes:
             lane.vehicles.clear() 
         for inter in self.traffic_map.intersections.values():
-            inter.light_state = 0 
+            inter.current_phase_index = 0
+            inter.current_phase = inter.phases[0]
+            inter.phase_timer = 0.0
+            inter.reset_stats()
             
-        # 获取初始状态并确保格式与 observation_space 一致
-        observation = self.get_state()
-        info = {} # 可以存放额外的调试信息
-        
-        return observation, info
+        return self.get_state(), {}
