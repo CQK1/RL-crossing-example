@@ -12,10 +12,11 @@ except ImportError:
     from src.generators.traffic_generator import InhomogeneousPoissonProcess
 
 class NetworkTrafficEnv(gym.Env):
-    def __init__(self, data_file_path=None):
+    def __init__(self, decision_interval : int = 10, data_file_path=None):
         super(NetworkTrafficEnv, self).__init__()
 
         self.dt = 1.0          # 步进时间为 1 秒
+        self.decision_interval = decision_interval
         self.time_step = 0     # 记录当前运行的总秒数 (Simulation Time)
 
         # ---------------------------------------------------------
@@ -109,45 +110,48 @@ class NetworkTrafficEnv(gym.Env):
         """
         核心物理与时间步进
         """
-        # 1. 信号灯动作下发
         action = action_array[0]
-        self.traffic_map.intersections["Mayor_Magrath"].apply_action(action, dt=self.dt)
+        total_reward = 0.0
 
-        # 2. 调用制造工厂生成实体
-        new_entities_dict = self.traffic_generator.generate_entities(float(self.time_step))
-        
-        # 3. 将生成的实体注入到对应的物理车道中
-        for lane in self.traffic_map.lanes:
-            # 只有指向路口中心的车道才接收发车源的流量
-            if lane.to_node_id == "Mayor_Magrath":
-                direction = lane.approach_direction
-                entities_to_add = new_entities_dict.get(direction, [])
-                if entities_to_add:
-                    # 【核心修改点】：限制单车道最大积压车辆数为 40 辆。
-                    # 当车道满了之后不强制塞车，防止 CPU 处理上千辆车导致运算性能崩溃卡死
-                    if len(lane.vehicles) < 40:
+        # Repeat physical micro-steps for the duration of the decision interval
+        for _ in range(self.decision_interval):
+            # 1. Apply the signal action to the intersection
+            self.traffic_map.intersections["Mayor_Magrath"].apply_action(action, dt=self.dt)
+
+            # 2. Sample stochastic vehicle and pedestrian arrivals for this second
+            new_entities_dict = self.traffic_generator.generate_entities(float(self.time_step))
+            
+            # 3. Inject new arrivals into incoming lanes
+            for lane in self.traffic_map.lanes:
+                if lane.to_node_id == "Mayor_Magrath":
+                    direction = lane.approach_direction
+                    entities_to_add = new_entities_dict.get(direction, [])
+                    if entities_to_add and len(lane.vehicles) < 40:
                         lane.vehicles.extend(entities_to_add)
-        
-        # 将清空缓冲移到整个循环外面，确保多条车道在分配完车辆前，发车数据不会被提前抹掉
-        for direction in new_entities_dict.keys():
-            new_entities_dict[direction] = []
+            
+            for direction in new_entities_dict.keys():
+                new_entities_dict[direction] = []
 
-        # 4. 驱动物理沙盒时间流逝
-        self.traffic_map.step(dt=self.dt)
+            # 4. Advance physics simulation by 1.0 second
+            self.traffic_map.step(dt=self.dt)
 
-        # 5. 计算反馈信号
+            # 5. Accumulate the waiting penalty incurred during this 1-second step
+            total_reward += self.calculate_reward()
+            
+            # Advance global clock
+            self.time_step += 1
+            
+            # Break early if end-of-day boundary is reached
+            if self.time_step >= 86400:
+                break
+
+        # Extract state representation at the end of the decision window
         observation = self.get_state()
-        reward = self.calculate_reward()
-        
-        # 时间推进
-        self.time_step += 1
-        
-        # 终止条件：每天有 24 小时 = 86400 秒
-        terminated = False 
-        truncated = self.time_step >= 86400 
+        terminated = False
+        truncated = self.time_step >= 86400
         info = {}
 
-        return observation, reward, terminated, truncated, info
+        return observation, total_reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)

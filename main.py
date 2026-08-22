@@ -54,4 +54,4 @@ def train_agent(timesteps=500):
     print("Training complete. Final model saved.")
 
 if __name__ == "__main__":
-    train_agent(timesteps=90000)
+    train_agent(timesteps=5000)
