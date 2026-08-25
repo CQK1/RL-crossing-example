@@ -1,0 +1,21 @@
+{
+  "traffic_env": {
+    "decision_interval": 30,
+    "simulation_day_seconds": 86400
+  },
+  "training": {
+    "train_days": 10,
+    "n_steps": 720,
+    "batch_size": 60,
+    "verbose": 1,
+    "tensorboard_log": "./traffic_tensorboard/",
+    "model_dir": "models",
+    "best_model_name": "best_mayor_magrath_ppo",
+    "final_model_name": "final_mayor_magrath_ppo"
+  },
+  "benchmark": {
+    "eval_episodes": 3,
+    "q_table_path": "data/q_table/best_q_table_Node_A.json",
+    "fixed_time_hold_seconds": 30
+  }
+}
