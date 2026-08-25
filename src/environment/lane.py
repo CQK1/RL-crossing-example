@@ -1,77 +1,84 @@
-from src.entities.vehicle import Vehicle
-
 class Lane:
-    def __init__(self, length=150.0, speed_limit=40):
+    def __init__(self, length=150.0, speed_limit=40, lane_type="all"):
         """
         Initialize the Lane segment representing a single road path.
+
+        :param length: Total length of the lane in meters.
+        :param speed_limit: Maximum allowed speed on this lane in m/s.
+        :param lane_type: Type of movements allowed on this lane.
+                          Options:
+                            - "all": All movements allowed (legacy behavior)
+                            - "straight_right": Straight and right-turn vehicles only
+                            - "left_uturn": Left-turn and U-turn vehicles only
         """
         self.length = length
         self.speed_limit = speed_limit
         self.vehicles = []
         self.approach_direction = "Unknown"
+        self.lane_type = lane_type  # Determines which vehicle movements are allowed here
 
     def update_vehicles_physics(self, dt=1.0, stop_line=None, is_red_func=None):
         """
         Update the physical positions and velocities of all vehicles on the lane.
-        
-        :param dt: Time step duration.
-        :param stop_line: Position coordinate of the intersection stop line.
-        :param is_red_func: Callable checking if the traffic light is red for a specific vehicle.
-        :return: List of vehicles that exited the lane in this step.
+
+        :param dt: Time step duration in seconds.
+        :param stop_line: Position coordinate (meters) where vehicles must stop at a red light.
+        :param is_red_func: Callable that takes a Vehicle and returns True if the signal is red for it.
+        :return: List of vehicles that exited the lane in this time step.
         """
-        # Sort vehicles by position in descending order (closest to the end of the lane first)
+        # Sort vehicles by position in descending order (front vehicle first)
         self.vehicles.sort(key=lambda x: x.position, reverse=True)
 
         for i, car in enumerate(self.vehicles):
-            target_acc = 1.5 
-            
-            # Check the traffic light status for this specific vehicle
+            target_acc = 1.5  # Default mild acceleration (m/s^2)
+
+            # Check whether this specific vehicle sees a red light
             is_red = is_red_func(car) if is_red_func else False
 
-            # A: Physical queue constraint (car-following logic)
+            # A: Car-following logic (only applies when there is a vehicle ahead)
             if i > 0:
-                front_car = self.vehicles[i-1]
-                # Calculate the absolute physical gap between the two vehicles (front vehicle's rear - rear vehicle's front)
+                front_car = self.vehicles[i - 1]
                 gap = front_car.back_position - car.position
-                
-                # Anti-collision mechanism: if the gap is too small, force a stop (reflects real physical queue lengths)
+
+                # Anti-collision: if the gap is too small, force a full stop
                 if gap <= 1.0:
                     car.speed = 0.0
                     target_acc = 0.0
-                elif gap < 8.0:  # Start decelerating within the safe car-following distance
+                # Safe following distance: decelerate when too close
+                elif gap < 8.0:
                     target_acc = -3.0
-                    
-            # B: If there is no leading vehicle and the current direction faces a red light
+
+            # B: Red-light logic (only for the lead vehicle with no car in front)
             elif is_red and stop_line is not None:
                 distance_to_stop = stop_line - car.position
+
+                # Approaching the stop line: brake to stop before it
                 if 0.0 < distance_to_stop < 20.0:
-                    # Begin braking within 20 meters of the stop line
                     safe_dist = max(distance_to_stop, 0.1)
-                    target_acc = - (car.speed ** 2) / (2 * safe_dist)
+                    target_acc = -(car.speed ** 2) / (2 * safe_dist)
+                # Already crossed the stop line but light is red: force stop
                 elif distance_to_stop <= 0.0:
-                    # Force a stop if the vehicle crossed the stop line but the light is still red
                     car.speed = 0.0
                     target_acc = 0.0
-            
+
             car.acceleration = target_acc
-            
-            # 3. Move in continuous physical steps
+
+            # Update continuous physics position and speed
             car.move_continuous(dt)
-            
-            # 4. Ensure vehicle speed does not exceed the road's speed limit
+
+            # Enforce speed limit
             if car.speed > self.speed_limit:
                 car.speed = self.speed_limit
-                
-        # 5. Segment vehicles into those remaining and those exiting the lane
+
+        # Separate vehicles that remain on the lane from those that have exited
         staying_vehicles = []
         leaving_vehicles = []
-        
+
         for car in self.vehicles:
             if car.position < self.length:
                 staying_vehicles.append(car)
             else:
                 leaving_vehicles.append(car)
-                
+
         self.vehicles = staying_vehicles
-        
         return leaving_vehicles

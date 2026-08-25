@@ -2,6 +2,7 @@ import math
 from src.environment.lane import Lane
 from src.environment.intersection import Intersection
 
+
 class TrafficMap:
     def __init__(self):
         """
@@ -9,7 +10,7 @@ class TrafficMap:
         """
         self.intersections = {}
         self.lanes = []
-        
+
     def add_intersection(self, node_id, x, y):
         """
         Add a new intersection node to the map if it doesn't already exist.
@@ -17,25 +18,34 @@ class TrafficMap:
         if node_id not in self.intersections:
             self.intersections[node_id] = Intersection(node_id, x, y)
 
-    def add_line(self, from_node_id, to_node_id, speed_limit):
+    def add_line(self, from_node_id, to_node_id, speed_limit, lane_type="all"):
         """
         Construct a road segment (lane) connecting two intersections.
+
+        :param from_node_id: ID of the source intersection.
+        :param to_node_id: ID of the target intersection.
+        :param speed_limit: Maximum speed allowed on this lane (m/s).
+        :param lane_type: Type of movements allowed on this lane.
+                          Options:
+                            - "all": All movements allowed (legacy behavior)
+                            - "straight_right": Straight and right-turn vehicles only
+                            - "left_uturn": Left-turn and U-turn vehicles only
         """
         if from_node_id not in self.intersections or to_node_id not in self.intersections:
             raise ValueError("Intersections you typed do not exist, add them first.")
-        
+
         from_node = self.intersections[from_node_id]
         to_node = self.intersections[to_node_id]
 
         # Calculate Euclidean distance between the intersections
         length = math.hypot(to_node.x - from_node.x, to_node.y - from_node.y)
 
-        new_lane = Lane(length=length, speed_limit=speed_limit)
+        new_lane = Lane(length=length, speed_limit=speed_limit, lane_type=lane_type)
         new_lane.from_node_id = from_node_id
         new_lane.to_node_id = to_node_id
 
         # Smart Inference: Calculate the vehicle's approach direction based on coordinates.
-        # For example, driving from West to East (dx > 0) means the vehicle enters the intersection from the West.
+        # Example: driving from West to East (dx > 0) means the vehicle enters from the West.
         dx = to_node.x - from_node.x
         dy = to_node.y - from_node.y
         if abs(dx) >= abs(dy):
@@ -49,64 +59,101 @@ class TrafficMap:
 
         self.lanes.append(new_lane)
         return new_lane
-            
+
     def step(self, dt=0.1):
         """
         Progress the simulation time steps across the entire road network.
         """
-        # Go through every intersection to notify vehicles of signal configurations
         for intersection in self.intersections.values():
-            
-            # Only update incoming lanes flowing into the current intersection to align with its signals
             for lane in intersection.incoming_lanes:
-                
-                # 【核心修复点】：如果流入的目标节点是一个 Exit 驶出节点，代表没有交通灯，直接永远放行（永远绿灯）
-                # 这样车辆才能开到终点，从而在离开车道时被正常垃圾回收，不会造成内存和计算堆积！
+
+                # Exit nodes have no traffic light; vehicles always proceed
                 if "exit" in str(intersection.name).lower():
                     def check_red_light_for_car(car):
                         return False
                 else:
-                    # 正常的十字路口，查询信号灯规则
+                    # Normal intersection: check signal state for each vehicle
                     def check_red_light_for_car(car):
-                        # Parse the movement intention from the vehicle's destination
-                        destination = str(car.destination).lower()
-                        if destination.endswith("_left"):
-                            movement = "left"
-                        elif destination.endswith("_right"):
-                            movement = "right"
-                        elif destination.endswith("_uturn"):
-                            movement = "u_turn"
-                        else:
-                            movement = "straight"
-                            
-                        # Query whether the current phase of the intersection permits the vehicle's movement
+                        movement = self._get_movement_type(car)
                         is_allowed = intersection.is_movement_allowed(
                             approach_direction=lane.approach_direction,
                             movement_type=movement
                         )
-                        # If allowed is False, it translates to a red light (True) for the vehicle physical simulation
-                        return not is_allowed 
+                        return not is_allowed
 
-                # Pass the evaluation function to the vehicle physics engine for autonomous checking
                 leaving_cars = lane.update_vehicles_physics(
-                    dt=dt, 
+                    dt=dt,
                     stop_line=lane.length - 2.0,
                     is_red_func=check_red_light_for_car
                 )
-                
-                # Vehicle handoff logic across intersections
+
+                # Hand off vehicles that have left this lane
                 if leaving_cars:
-                    for car in leaving_cars:
-                        if car.destination == f"{intersection.name}_left":
-                            intersection.stats["left"] += 1
-                        elif car.destination == f"{intersection.name}_right":
-                            intersection.stats["right"] += 1
-                        elif car.destination == intersection.name:
-                            intersection.stats["straight"] += 1
-                        elif len(intersection.outgoing_lanes) > 0:
-                            intersection.stats["straight"] += 1
-                            next_lane = intersection.outgoing_lanes[0]
-                            # Reset the vehicle's position to the beginning of the new lane
-                            car.position = 0.0 
-                            # Enter the next road segment while retaining its original speed
-                            next_lane.vehicles.append(car)
+                    self._handoff_vehicles(intersection, leaving_cars)
+
+    def _get_movement_type(self, car):
+        """
+        Determine the movement type of a vehicle based on its destination string.
+
+        :param car: Vehicle object.
+        :return: Movement type string: "straight", "left", "right", or "u_turn".
+        """
+        destination = str(car.destination).lower()
+
+        if destination.endswith("_left"):
+            return "left"
+        elif destination.endswith("_right"):
+            return "right"
+        elif destination.endswith("_u_turn"):  # Fixed: was "_uturn"
+            return "u_turn"
+        else:
+            return "straight"
+
+    def _handoff_vehicles(self, intersection, leaving_cars):
+        """
+        Route vehicles that have exited an incoming lane to the correct outgoing lane.
+
+        :param intersection: The intersection the vehicles just passed through.
+        :param leaving_cars: List of vehicles that exited the incoming lane.
+        """
+        for car in leaving_cars:
+            # Update throughput statistics
+            dest = str(car.destination).lower()
+            if dest.endswith("_left"):
+                intersection.stats["left"] += 1
+            elif dest.endswith("_right"):
+                intersection.stats["right"] += 1
+            elif dest.endswith("_u_turn"):
+                intersection.stats["u_turn"] += 1
+            else:
+                intersection.stats["straight"] += 1
+
+            # Route vehicle to the correct outgoing lane based on its destination
+            next_lane = self._select_outgoing_lane(intersection, car)
+            if next_lane is not None:
+                car.position = 0.0
+                next_lane.vehicles.append(car)
+
+    def _select_outgoing_lane(self, intersection, car):
+        """
+        Select the appropriate outgoing lane for a vehicle based on its destination.
+
+        :param intersection: The intersection the vehicle just passed through.
+        :param car: Vehicle object.
+        :return: The outgoing Lane object, or None if no matching lane exists.
+        """
+        dest = str(car.destination).lower()
+        outgoing_lanes = intersection.outgoing_lanes
+
+        if not outgoing_lanes:
+            return None
+
+        # If destination is an Exit node name (e.g., "north_exit"),
+        # match to the outgoing lane whose to_node_id matches that exit node.
+        for lane in outgoing_lanes:
+            to_node_id = str(lane.to_node_id).lower()
+            if dest.endswith(to_node_id) or to_node_id.endswith(dest):
+                return lane
+
+        # Fallback: if no exact match, route to the first available outgoing lane
+        return outgoing_lanes[0]

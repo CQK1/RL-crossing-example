@@ -34,13 +34,15 @@ class FixedTimeBaselineAgent:
             self.current_idx = (self.current_idx + 1) % len(self.cycle_phases)
         return action
 
+
 def array_to_dict(state_array):
     return {
         'current_phase': state_array[0],
-        'queue_ns_straight': state_array[1],
-        'queue_ns_left': state_array[2],
-        'queue_ew_straight': state_array[3],
-        'queue_ew_left': state_array[4]
+        'phase_timer': state_array[1],
+        'queue_ns_straight': state_array[2],
+        'queue_ns_left': state_array[3],
+        'queue_ew_straight': state_array[4],
+        'queue_ew_left': state_array[5]
     }
 
 def evaluate_policy(policy_type, episodes=EVAL_EPISODES):

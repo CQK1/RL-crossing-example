@@ -4,7 +4,7 @@ import os
 import ast
 
 class QLearningAgent:
-    def __init__(self, action_space=[0, 1], alpha=0.1, gamma=0.9, epsilon=0.1):
+    def __init__(self, action_space=[0, 1, 2, 3], alpha=0.1, gamma=0.9, epsilon=0.1):
         self.action_space = action_space
         self.alpha = alpha       # Learning rate: how much the agent updates its knowledge based on new information (0 means no learning, 1 means only the latest info matters)
         self.gamma = gamma       # Discount factor: how much the agent values future rewards (0 means only immediate rewards matter, 1 means all future rewards are equally important)
@@ -13,13 +13,19 @@ class QLearningAgent:
 
     def _get_state_key(self, state):
         # 提取新的详细排队状态作为 Q-Table 的键
+        # 状态顺序：[current_phase, phase_timer_normalized, ns_straight, ns_left, ew_straight, ew_left]
         phase = int(state.get('current_phase', 0))
+        
+        # 将 phase_timer 离散化成 0-5 的整数（归一化值 0-1 映射到 0-5）
+        phase_timer_raw = state.get('phase_timer', 0.0)
+        phase_timer_bin = int(min(phase_timer_raw * 6.0, 5.0))  # 离散化成 6 个桶
+        
         ns_s = int(state.get('queue_ns_straight', 0))
         ns_l = int(state.get('queue_ns_left', 0))
         ew_s = int(state.get('queue_ew_straight', 0))
         ew_l = int(state.get('queue_ew_left', 0))
         
-        return (phase, ns_s, ns_l, ew_s, ew_l)
+        return (phase, phase_timer_bin, ns_s, ns_l, ew_s, ew_l)
     
     def _ensure_state_in_q_table(self, state):
         state_key = self._get_state_key(state)
@@ -38,8 +44,8 @@ class QLearningAgent:
         else:
             # Exploit: choose the action with the highest Q-value for the current state
             q_values = self.q_table[state_key]
-            max_q = max(q_values)
-            best_actions = [action for action, q_value in self.q_table[state_key].items() if q_value == max_q]
+            max_q = max(q_values.values())
+            best_actions = [action for action, q_value in q_values.items() if q_value == max_q]
 
             if not best_actions:
                 return random.choice(self.action_space)  # If no best action, choose randomly
@@ -75,7 +81,7 @@ class QLearningAgent:
                 self.q_table = {
                     ast.literal_eval(state_str): {int(act_str): q_val for act_str, q_val in q_values.items()}
                     for state_str, q_values in loaded_q_table.items()
-            }
+                }
             print(f"Q-table has been loaded from {filename}")
         else:
             print(f"No Q-table file found at {filename}. Starting with an empty Q-table.")

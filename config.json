@@ -4,7 +4,7 @@
     "simulation_day_seconds": 86400
   },
   "training": {
-    "train_days": 10,
+    "train_days": 5,
     "n_steps": 720,
     "batch_size": 60,
     "verbose": 1,

@@ -97,6 +97,11 @@ class Intersection:
         """
         Process the phase action chosen by the Reinforcement Learning Agent.
         """
+        # Clearance time: add phase duration but doesn't change the phase
+        if rl_action == -1:
+            self.phase_timer += dt
+            return self.current_phase
+
         requested_change = (rl_action != self.current_phase_index)
 
         # 1. Hard Rule: Max Green constraint (Force a phase shift to prevent starvation)

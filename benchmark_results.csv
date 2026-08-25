@@ -1,4 +1,4 @@
 Policy,Total Delay (Veh-s),Throughput (Veh),Avg Delay per Vehicle (s/veh),Phase Switches (/day),Delay Improvement vs Baseline (%)
-Baseline (Fixed-Time),4735023.67,15107.33,313.43,2879.00,0.00
-Tabular Q-Learning,9533684.00,17097.00,557.62,1430.33,-101.34
-Deep RL (PPO),9391739.67,13318.33,705.17,851.33,-98.35
+Baseline (Fixed-Time),4805219.67,14931.00,321.83,2879.00,0.00
+Tabular Q-Learning,7351199.67,11491.33,639.72,2158.00,-52.98
+Deep RL (PPO),9534570.00,9367.67,1017.82,830.00,-98.42

@@ -3,30 +3,31 @@ from typing import Any
 from src.entities.pedestrian import Pedestrian
 from src.entities.vehicle import Vehicle
 
+
 class TrafficGenerator:
     def __init__(self, rate_model: Any):
         """
         Traffic Generator Engine.
-        
+
         This class acts as the "factory" that creates physical vehicle/pedestrian instances.
         It is decoupled from the mathematical logic of *when* to spawn them.
-        
-        :param rate_model: A mathematical model instance (e.g., InhomogeneousPoissonProcess) 
-                           that provides a method to query the arrival probability $\lambda(t)$ 
+
+        :param rate_model: A mathematical model instance (e.g., InhomogeneousPoissonProcess)
+                           that provides a method to query the arrival probability lambda(t)
                            for any given time step and direction.
         """
-        # 依赖注入：注入数学模型引擎 (配方师)
+        # Dependency injection: the mathematical model provides arrival rates
         self.rate_model = rate_model
 
-        # 映射：物理上的四大进口 (North, South, East, West) 
-        # 对应 Excel 数据集（数学模型）中具体的流通量列名
+        # Mapping: physical approach directions (North, South, East, West)
+        # to the column names in the Excel dataset (mathematical model).
         self.movements_mapping = {
             "North": {
                 "straight": "north_thru",
                 "left": "north_left",
                 "right": "north_right",
                 "u_turn": "north_u_turn",
-                "pedestrian": "north_peds_cw"  # 简化：南北向合并为一个行人通道
+                "pedestrian": "north_peds_cw"
             },
             "South": {
                 "straight": "south_thru",
@@ -53,44 +54,44 @@ class TrafficGenerator:
 
     def generate_entities(self, time_in_seconds: float):
         """
-        Generates physical vehicles and pedestrians based on the probabilities 
+        Generate physical vehicles and pedestrians based on arrival probabilities
         provided by the external rate_model at the current simulation time.
-        
-        :param time_in_seconds: Current global simulation time.
+
+        :param time_in_seconds: Current global simulation time in seconds.
         :return: A dictionary containing lists of generated entities for each approach direction.
                  Format: {"North": [Vehicle, Pedestrian, ...], "South": [...], ...}
+                 Each Vehicle has a `destination` string and a `movement_type` attribute.
         """
         new_entities = {"North": [], "South": [], "East": [], "West": []}
-        
-        # 遍历四个入口方向
+
         for direction, movements in self.movements_mapping.items():
-            
-            # 1. 生成机动车 (Vehicles)
+            # 1. Generate motor vehicles
             for intent, column_name in movements.items():
                 if intent == "pedestrian":
-                    continue  # 行人单独处理
-                
-                # 核心逻辑：向外部数学模型查询当前时间、当前转向的生成概率 (\lambda)
-                # 你可以在这里一键切换为 get_rate_interpolated 来让车流更加平滑
+                    continue  # Pedestrians are handled separately below
+
+                # Query the mathematical model for the arrival probability at this time
                 probability = self.rate_model.get_rate_interpolated(time_in_seconds, column_name)
-                
-                # 掷骰子模拟泊松到达
+
+                # Roll the dice: Poisson arrival simulation
                 if random.random() < probability:
-                    # 组装目的地标签，匹配 intersection.py 里的 is_movement_allowed 格式
-                    # 例如：intent 为 "left"，目的地为 "Mayor_Magrath_left"
-                    dest = f"Mayor_Magrath_{intent}" if intent != "straight" else "Mayor_Magrath"
-                    
+                    # Build the destination label that matches intersection.py's is_movement_allowed format
+                    # Example: intent "left" -> destination "Mayor_Magrath_left"
+                    if intent == "straight":
+                        dest = "Mayor_Magrath"
+                    else:
+                        dest = f"Mayor_Magrath_{intent}"
+
                     car = Vehicle(start_pos=0.0, destination=dest)
+                    car.movement_type = intent  # Store movement type for lane assignment
                     new_entities[direction].append(car)
-            
-            # 2. 生成行人 (Pedestrians)
+
+            # 2. Generate pedestrians
             ped_column = movements.get("pedestrian")
             if ped_column:
                 ped_prob = self.rate_model.get_rate_interpolated(time_in_seconds, ped_column)
                 if random.random() < ped_prob:
                     pedestrian = Pedestrian(start_pos=0.0)
-                    # 将行人也暂时混入列表中，后续 Environment 在分发时需要区别对待
-                    # 或者你可以在物理引擎中扩展一个专属的斑马线排队区
                     new_entities[direction].append(pedestrian)
-                    
+
         return new_entities

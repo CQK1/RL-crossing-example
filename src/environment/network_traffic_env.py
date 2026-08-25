@@ -11,145 +11,212 @@ try:
 except ImportError:
     from src.generators.traffic_generator import InhomogeneousPoissonProcess
 
+
 class NetworkTrafficEnv(gym.Env):
-    def __init__(self, decision_interval : int = 10, data_file_path=None):
+    def __init__(self, decision_interval: int = 10, data_file_path=None):
         super(NetworkTrafficEnv, self).__init__()
 
-        self.dt = 1.0          # 步进时间为 1 秒
+        self.dt = 1.0                  # Physics step size: 1 second
         self.decision_interval = decision_interval
-        self.time_step = 0     # 记录当前运行的总秒数 (Simulation Time)
+        self.time_step = 0             # Global simulation clock in seconds
+        self.yellow_duration = 3       # Combined yellow + all-red clearance time when switching phases
 
         # ---------------------------------------------------------
-        # 第一步：数据与数学引擎初始化 (Data & Mathematical Engine)
+        # 1. Data & Mathematical Engine
         # ---------------------------------------------------------
         if data_file_path is None:
             data_file_path = "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx"
             if not os.path.exists(data_file_path):
                 data_file_path = os.path.join("data", "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx")
-        
+
         self.data_reader = TrafficDataReader(data_file_path)
         self.traffic_data = self.data_reader.load_data()
-        
+
         self.poisson_engine = InhomogeneousPoissonProcess(self.traffic_data, cyclic=True)
         self.traffic_generator = TrafficGenerator(rate_model=self.poisson_engine)
 
         # ---------------------------------------------------------
-        # 第二步：物理引擎与拓扑组装 (Physics & Map Topology)
+        # 2. Physics & Map Topology
         # ---------------------------------------------------------
         self.traffic_map = TrafficMap()
         self.controlled_nodes = ["Mayor_Magrath"]
         self.num_nodes = 1
-        
-        # 动作空间：1个路口，4个离散动作 (NS直行, NS左转, EW直行, EW左转)
-        self.action_space = spaces.MultiDiscrete([4])
-        # 状态空间：5个特征 (当前相位ID + 四个方向停止等待的车辆/行人总数)
-        self.observation_space = spaces.Box(low=0, high=500, shape=(5,), dtype=np.float32)
 
-        # 建立中心节点
+        # Action space: 1 intersection, 4 discrete actions
+        # 0 = NS_Straight, 1 = NS_Left, 2 = EW_Straight, 3 = EW_Left
+        self.action_space = spaces.MultiDiscrete([4])
+
+        # State space: 6 features
+        # [current_phase_id, phase_timer_normalized, ns_straight_queue, ns_left_queue, ew_straight_queue, ew_left_queue]
+        self.observation_space = spaces.Box(low=0, high=500, shape=(6,), dtype=np.float32)
+
+        # Create the central intersection
         self.traffic_map.add_intersection("Mayor_Magrath", 0.0, 0.0)
-        
-        # 定义东南西北 4 个发车源(Spawn) 和 4 个驶出点(Exit)
-        spawns = {"North": (0, 200), "South": (0, -200), "East": (200, 0), "West": (-200, 0)}
-        
+
+        # Define 4 spawn nodes and 4 exit nodes around the central intersection
+        spawns = {
+            "North": (0, 200),
+            "South": (0, -200),
+            "East": (200, 0),
+            "West": (-200, 0)
+        }
+
         for dir_name, (x, y) in spawns.items():
             spawn_node = f"{dir_name}_Spawn"
             exit_node = f"{dir_name}_Exit"
-            
+
             self.traffic_map.add_intersection(spawn_node, x, y)
-            self.traffic_map.add_intersection(exit_node, x * 2, y * 2) 
-            
-            # 驶入路口的车道 (Speed limit 15 m/s ≈ 54 km/h)
-            self.traffic_map.add_line(spawn_node, "Mayor_Magrath", speed_limit=15.0)
-            # 驶离路口的车道
-            self.traffic_map.add_line("Mayor_Magrath", exit_node, speed_limit=15.0)
+            self.traffic_map.add_intersection(exit_node, x * 2, y * 2)
+
+            # Incoming lanes: 2 per direction (straight+right, left+u-turn)
+            self.traffic_map.add_line(
+                spawn_node, "Mayor_Magrath",
+                speed_limit=15.0,
+                lane_type="straight_right"
+            )
+            self.traffic_map.add_line(
+                spawn_node, "Mayor_Magrath",
+                speed_limit=15.0,
+                lane_type="left_uturn"
+            )
+
+            # Outgoing lane: 1 per direction
+            self.traffic_map.add_line(
+                "Mayor_Magrath", exit_node,
+                speed_limit=15.0,
+                lane_type="all"
+            )
 
     def get_state(self):
         """
-        观测状态提取：将当前路口的排队情况汇总成一维向量供强化学习使用。
+        Build the observation vector from the current intersection state.
+
+        Returns:
+            np.ndarray of shape (6,) containing:
+            [phase_id, phase_timer_normalized, ns_straight_queue, ns_left_queue, ew_straight_queue, ew_left_queue]
         """
-        obs = []
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
         ns_straight_count, ns_left_count = 0, 0
         ew_straight_count, ew_left_count = 0, 0
 
         for lane in intersection.incoming_lanes:
             is_ns_lane = lane.approach_direction in ["North", "South"]
-            
-            # 统计停止线前排队的物理车辆数量 (速度为0即视为排队)
-            for car in lane.vehicles:
-                if car.speed == 0.0:
-                    is_left_turn = str(car.destination).endswith("_left")
-                    if is_ns_lane:
-                        if is_left_turn: ns_left_count += 1
-                        else: ns_straight_count += 1
-                    else:
-                        if is_left_turn: ew_left_count += 1
-                        else: ew_straight_count += 1
 
-        # 构建状态数组：[当前相位, 南北直行排队, 南北左转排队, 东西直行排队, 东西左转排队]
-        obs.extend([
+            # Count queued (stopped) vehicles in this lane
+            for car in lane.vehicles:
+                if car.speed <= 0.1:
+                    # Determine if this vehicle is a left-turn movement
+                    is_left_turn = str(car.destination).lower().endswith("_left")
+
+                    if is_ns_lane:
+                        if is_left_turn:
+                            ns_left_count += 1
+                        else:
+                            ns_straight_count += 1
+                    else:
+                        if is_left_turn:
+                            ew_left_count += 1
+                        else:
+                            ew_straight_count += 1
+
+        # Normalize phase timer to [0, 1] range (max_green = 60s)
+        phase_timer_normalized = min(intersection.phase_timer / 60.0, 1.0)
+
+        obs = np.array([
             intersection.current_phase_index,
-            ns_straight_count, 
+            phase_timer_normalized,
+            ns_straight_count,
             ns_left_count,
-            ew_straight_count, 
+            ew_straight_count,
             ew_left_count
-        ])
-        return np.array(obs, dtype=np.float32)
+        ], dtype=np.float32)
+
+        return obs
 
     def calculate_reward(self):
         """
-        Penalty equals the number of stopped vehicles in this exact second,
-        avoiding quadratic accumulation.
+        Reward is a linear penalty: -1 point per stopped vehicle per second.
         """
         stopped_vehicles = 0
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
+
         for lane in intersection.incoming_lanes:
-            # Count vehicles currently stopped at this second
             stopped_vehicles += sum(1 for car in lane.vehicles if car.speed <= 0.1)
-        
-        # Linear penalty: -1 point per stopped vehicle per second
+
         return float(-stopped_vehicles)
 
     def step(self, action_array):
         """
-        核心物理与时间步进
+        Advance the simulation by one decision interval.
+
+        :param action_array: Array-like containing a single integer action (0-3).
+        :return: (observation, reward, terminated, truncated, info)
         """
-        action = action_array[0]
+        action = int(action_array[0])
         total_reward = 0.0
 
-        # Repeat physical micro-steps for the duration of the decision interval
-        for _ in range(self.decision_interval):
-            # 1. Apply the signal action to the intersection
-            self.traffic_map.intersections["Mayor_Magrath"].apply_action(action, dt=self.dt)
+        intersection = self.traffic_map.intersections["Mayor_Magrath"]
+        current_phase_index = intersection.current_phase_index
+        is_phase_change = (action != current_phase_index)
 
-            # 2. Sample stochastic vehicle and pedestrian arrivals for this second
+        # If switching phases, insert 3 seconds of all-red clearance first
+        yellow_duration = self.yellow_duration if is_phase_change else 0
+
+        # Run micro-steps for the full decision interval
+        for step_idx in range(self.decision_interval):
+            # 1. Apply signal control
+            if step_idx < yellow_duration:
+                # All-red clearance period
+                intersection.apply_action(-1, dt=self.dt)
+            else:
+                # Normal green phase for the target action
+                intersection.apply_action(action, dt=self.dt)
+
+            # 2. Generate stochastic arrivals for this second
             new_entities_dict = self.traffic_generator.generate_entities(float(self.time_step))
-            
-            # 3. Inject new arrivals into incoming lanes
+
+            # 3. Inject new arrivals into the correct incoming lanes based on movement type
             for lane in self.traffic_map.lanes:
-                if lane.to_node_id == "Mayor_Magrath":
-                    direction = lane.approach_direction
-                    entities_to_add = new_entities_dict.get(direction, [])
-                    if entities_to_add and len(lane.vehicles) < 40:
-                        lane.vehicles.extend(entities_to_add)
-            
+                if lane.to_node_id != "Mayor_Magrath":
+                    continue
+
+                direction = lane.approach_direction
+                entities_to_add = new_entities_dict.get(direction, [])
+
+                if not entities_to_add:
+                    continue
+
+                # Filter entities: pedestrians are not placed on vehicle lanes
+                vehicles_to_add = [e for e in entities_to_add if hasattr(e, "movement_type")]
+
+                # Assign each vehicle to the correct lane based on its movement type
+                for vehicle in vehicles_to_add:
+                    if lane.lane_type == "straight_right":
+                        if vehicle.movement_type in ["straight", "right"]:
+                            if len(lane.vehicles) < 40:
+                                lane.vehicles.append(vehicle)
+                    elif lane.lane_type == "left_uturn":
+                        if vehicle.movement_type in ["left", "u_turn"]:
+                            if len(lane.vehicles) < 40:
+                                lane.vehicles.append(vehicle)
+
+            # Clear the temporary entities dictionary for the next second
             for direction in new_entities_dict.keys():
                 new_entities_dict[direction] = []
 
-            # 4. Advance physics simulation by 1.0 second
+            # 4. Advance physics simulation by 1 second
             self.traffic_map.step(dt=self.dt)
 
-            # 5. Accumulate the waiting penalty incurred during this 1-second step
+            # 5. Accumulate reward
             total_reward += self.calculate_reward()
-            
+
             # Advance global clock
             self.time_step += 1
-            
-            # Break early if end-of-day boundary is reached
+
+            # Break if end of day is reached
             if self.time_step >= 86400:
                 break
 
-        # Extract state representation at the end of the decision window
         observation = self.get_state()
         terminated = False
         truncated = self.time_step >= 86400
@@ -158,20 +225,22 @@ class NetworkTrafficEnv(gym.Env):
         return observation, total_reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
+        """
+        Reset the environment to the start of a new day.
+        """
         super().reset(seed=seed)
-        
-        # 将仿真时间重置为凌晨 00:00:00 (0秒)
+
         self.time_step = 0
-        
-        # 清空物理地图上的所有残留车辆
+
+        # Clear all vehicles from all lanes
         for lane in self.traffic_map.lanes:
-            lane.vehicles.clear() 
-            
-        # 重置路口相位到默认状态
+            lane.vehicles.clear()
+
+        # Reset all intersections to default phase
         for inter in self.traffic_map.intersections.values():
             inter.current_phase_index = 0
             inter.current_phase = inter.phases[0]
             inter.phase_timer = 0.0
             inter.reset_stats()
-            
+
         return self.get_state(), {}
