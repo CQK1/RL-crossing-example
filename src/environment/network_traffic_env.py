@@ -98,13 +98,17 @@ class NetworkTrafficEnv(gym.Env):
 
     def calculate_reward(self):
         """
-        奖励函数：优化目标是最小化整个路口的延误时间 (Delay)。
+        Penalty equals the number of stopped vehicles in this exact second,
+        avoiding quadratic accumulation.
         """
-        total_penalty = 0.0
+        stopped_vehicles = 0
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
         for lane in intersection.incoming_lanes:
-            total_penalty += sum(car.waiting_time for car in lane.vehicles if car.speed == 0.0)
-        return -total_penalty
+            # Count vehicles currently stopped at this second
+            stopped_vehicles += sum(1 for car in lane.vehicles if car.speed <= 0.1)
+        
+        # Linear penalty: -1 point per stopped vehicle per second
+        return float(-stopped_vehicles)
 
     def step(self, action_array):
         """
