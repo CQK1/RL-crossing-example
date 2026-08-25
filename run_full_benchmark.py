@@ -16,8 +16,15 @@ EVAL_EPISODES = CONFIG["benchmark"]["eval_episodes"]
 Q_TABLE_PATH = CONFIG["benchmark"]["q_table_path"]
 FIXED_HOLD_SECONDS = CONFIG["benchmark"]["fixed_time_hold_seconds"]
 
+# Which policies to evaluate (configurable via config.json)
+POLICIES_TO_EVAL = CONFIG["benchmark"].get(
+    "policies",
+    ["Baseline (Fixed-Time)", "Deep RL (PPO)"]
+)
+
 # Calculate how many decision steps to hold each phase
 HOLD_STEPS = max(1, FIXED_HOLD_SECONDS // DECISION_INTERVAL)
+
 
 class FixedTimeBaselineAgent:
     def __init__(self, cycle_phases=[0, 1, 2, 3], hold_steps=HOLD_STEPS):
@@ -42,27 +49,44 @@ def array_to_dict(state_array):
         'queue_ns_straight': state_array[2],
         'queue_ns_left': state_array[3],
         'queue_ew_straight': state_array[4],
-        'queue_ew_left': state_array[5]
+        'queue_ew_left': state_array[5],
+        'max_wait_ns_straight': state_array[6],
+        'max_wait_ns_left': state_array[7],
+        'max_wait_ew_straight': state_array[8],
+        'max_wait_ew_left': state_array[9]
     }
+
 
 def evaluate_policy(policy_type, episodes=EVAL_EPISODES):
     # Base environment automatically binds to unified decision interval
     env = NetworkTrafficEnv(decision_interval=DECISION_INTERVAL)
-    
+
     if policy_type == "Baseline (Fixed-Time)":
         agent = FixedTimeBaselineAgent()
+
     elif policy_type == "Tabular Q-Learning":
         agent = QLearningAgent()
         if os.path.exists(Q_TABLE_PATH):
             agent.load_q_table(Q_TABLE_PATH)
         agent.epsilon = 0.0
+
     elif policy_type == "Deep RL (PPO)":
         def make_env():
             return NetworkTrafficEnv(decision_interval=DECISION_INTERVAL)
+
         vec_env = DummyVecEnv([make_env])
-        norm_env = VecNormalize(vec_env, norm_obs=False, norm_reward=False)
+        norm_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True)
+
+        # Load normalization statistics saved during training
+        vec_norm_path = os.path.join(CONFIG["training"]["model_dir"], "vec_normalize.pkl")
+        if os.path.exists(vec_norm_path):
+            norm_env.load(vec_norm_path)
+            print(f"  └── Loaded VecNormalize stats from {vec_norm_path}")
+
         model_file = os.path.join(CONFIG["training"]["model_dir"], CONFIG["training"]["best_model_name"])
         ppo_model = PPO.load(model_file, env=norm_env)
+    else:
+        raise ValueError(f"Unknown policy type: {policy_type}")
 
     delays, throughputs, phase_switches = [], [], []
 
@@ -113,29 +137,35 @@ def evaluate_policy(policy_type, episodes=EVAL_EPISODES):
         "Phase Switches (/day)": mean_switches
     }
 
+
 def run_full_benchmark():
     print(f"Running Benchmark with Global Config (Decision Interval = {DECISION_INTERVAL}s)...")
+    print(f"Policies to evaluate: {POLICIES_TO_EVAL}")
+
     results = []
-    policies = ["Baseline (Fixed-Time)", "Tabular Q-Learning", "Deep RL (PPO)"]
-    
-    for p in policies:
+
+    for p in POLICIES_TO_EVAL:
         print(f"\nEvaluating: {p}")
         res = evaluate_policy(p, episodes=EVAL_EPISODES)
         results.append(res)
 
     df = pd.DataFrame(results)
-    base_delay = df.loc[df["Policy"] == "Baseline (Fixed-Time)", "Total Delay (Veh-s)"].values[0]
-    df["Delay Improvement vs Baseline (%)"] = ((base_delay - df["Total Delay (Veh-s)"]) / base_delay) * 100.0
+
+    # Calculate improvement relative to Baseline if Baseline is present
+    if "Baseline (Fixed-Time)" in df["Policy"].values:
+        base_delay = df.loc[df["Policy"] == "Baseline (Fixed-Time)", "Total Delay (Veh-s)"].values[0]
+        df["Delay Improvement vs Baseline (%)"] = ((base_delay - df["Total Delay (Veh-s)"]) / base_delay) * 100.0
 
     print("\n" + "=" * 80)
     print("                     FINAL MULTI-METRIC COMPARISON TABLE")
     print("=" * 80)
     print(df.to_string(index=False))
     print("=" * 80)
-    
+
     # Auto-save results to CSV
     df.to_csv("benchmark_results.csv", index=False, float_format="%.2f")
     print("Results successfully exported to benchmark_results.csv")
+
 
 if __name__ == "__main__":
     run_full_benchmark()

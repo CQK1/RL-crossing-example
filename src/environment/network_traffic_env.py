@@ -16,23 +16,32 @@ class NetworkTrafficEnv(gym.Env):
     def __init__(self, decision_interval: int = 10, data_file_path=None):
         super(NetworkTrafficEnv, self).__init__()
 
-        self.dt = 1.0                  # Physics step size: 1 second
+        self.dt = 1.0  # Physics step size: 1 second
         self.decision_interval = decision_interval
-        self.time_step = 0             # Global simulation clock in seconds
-        self.yellow_duration = 3       # Combined yellow + all-red clearance time when switching phases
+        self.time_step = 0  # Global simulation clock in seconds
+        self.yellow_duration = (
+            3  # Combined yellow + all-red clearance time when switching phases
+        )
 
         # ---------------------------------------------------------
         # 1. Data & Mathematical Engine
         # ---------------------------------------------------------
         if data_file_path is None:
-            data_file_path = "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx"
+            data_file_path = (
+                "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx"
+            )
             if not os.path.exists(data_file_path):
-                data_file_path = os.path.join("data", "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx")
+                data_file_path = os.path.join(
+                    "data",
+                    "Mayor Magrath Drive & 5 Avenue S_Binned_20260524170346-1.xlsx",
+                )
 
         self.data_reader = TrafficDataReader(data_file_path)
         self.traffic_data = self.data_reader.load_data()
 
-        self.poisson_engine = InhomogeneousPoissonProcess(self.traffic_data, cyclic=True)
+        self.poisson_engine = InhomogeneousPoissonProcess(
+            self.traffic_data, cyclic=True
+        )
         self.traffic_generator = TrafficGenerator(rate_model=self.poisson_engine)
 
         # ---------------------------------------------------------
@@ -48,7 +57,9 @@ class NetworkTrafficEnv(gym.Env):
 
         # State space: 6 features
         # [current_phase_id, phase_timer_normalized, ns_straight_queue, ns_left_queue, ew_straight_queue, ew_left_queue]
-        self.observation_space = spaces.Box(low=0, high=500, shape=(6,), dtype=np.float32)
+        self.observation_space = spaces.Box(
+            low=0, high=500, shape=(10,), dtype=np.float32
+        )
 
         # Create the central intersection
         self.traffic_map.add_intersection("Mayor_Magrath", 0.0, 0.0)
@@ -58,7 +69,7 @@ class NetworkTrafficEnv(gym.Env):
             "North": (0, 200),
             "South": (0, -200),
             "East": (200, 0),
-            "West": (-200, 0)
+            "West": (-200, 0),
         }
 
         for dir_name, (x, y) in spawns.items():
@@ -70,21 +81,18 @@ class NetworkTrafficEnv(gym.Env):
 
             # Incoming lanes: 2 per direction (straight+right, left+u-turn)
             self.traffic_map.add_line(
-                spawn_node, "Mayor_Magrath",
+                spawn_node,
+                "Mayor_Magrath",
                 speed_limit=15.0,
-                lane_type="straight_right"
+                lane_type="straight_right",
             )
             self.traffic_map.add_line(
-                spawn_node, "Mayor_Magrath",
-                speed_limit=15.0,
-                lane_type="left_uturn"
+                spawn_node, "Mayor_Magrath", speed_limit=15.0, lane_type="left_uturn"
             )
 
             # Outgoing lane: 1 per direction
             self.traffic_map.add_line(
-                "Mayor_Magrath", exit_node,
-                speed_limit=15.0,
-                lane_type="all"
+                "Mayor_Magrath", exit_node, speed_limit=15.0, lane_type="all"
             )
 
     def get_state(self):
@@ -98,6 +106,12 @@ class NetworkTrafficEnv(gym.Env):
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
         ns_straight_count, ns_left_count = 0, 0
         ew_straight_count, ew_left_count = 0, 0
+        
+        # Initialize max waiting time trackers
+        ns_straight_max_wait = 0.0
+        ns_left_max_wait = 0.0
+        ew_straight_max_wait = 0.0
+        ew_left_max_wait = 0.0
 
         for lane in intersection.incoming_lanes:
             is_ns_lane = lane.approach_direction in ["North", "South"]
@@ -122,28 +136,38 @@ class NetworkTrafficEnv(gym.Env):
         # Normalize phase timer to [0, 1] range (max_green = 60s)
         phase_timer_normalized = min(intersection.phase_timer / 60.0, 1.0)
 
-        obs = np.array([
-            intersection.current_phase_index,
-            phase_timer_normalized,
-            ns_straight_count,
-            ns_left_count,
-            ew_straight_count,
-            ew_left_count
-        ], dtype=np.float32)
+        obs = np.array(
+            [
+                intersection.current_phase_index,  # 0
+                phase_timer_normalized,  # 1
+                ns_straight_count,  # 2
+                ns_left_count,  # 3
+                ew_straight_count,  # 4
+                ew_left_count,  # 5
+                ns_straight_max_wait,  # 6  ← 新增
+                ns_left_max_wait,  # 7  ← 新增
+                ew_straight_max_wait,  # 8  ← 新增
+                ew_left_max_wait,
+            ],
+            dtype=np.float32,
+        )
 
         return obs
 
     def calculate_reward(self):
         """
-        Reward is a linear penalty: -1 point per stopped vehicle per second.
+        Penalty based on cumulative waiting time, not just vehicle count.
         """
-        stopped_vehicles = 0
+        total_penalty = 0.0
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
 
         for lane in intersection.incoming_lanes:
-            stopped_vehicles += sum(1 for car in lane.vehicles if car.speed <= 0.1)
+            for car in lane.vehicles:
+                if car.speed <= 0.1:
+                    # Vehicle already tracks its own waiting_time internally
+                    total_penalty += car.waiting_time
 
-        return float(-stopped_vehicles)
+        return float(-total_penalty)
 
     def step(self, action_array):
         """
@@ -157,7 +181,7 @@ class NetworkTrafficEnv(gym.Env):
 
         intersection = self.traffic_map.intersections["Mayor_Magrath"]
         current_phase_index = intersection.current_phase_index
-        is_phase_change = (action != current_phase_index)
+        is_phase_change = action != current_phase_index
 
         # If switching phases, insert 3 seconds of all-red clearance first
         yellow_duration = self.yellow_duration if is_phase_change else 0
@@ -173,7 +197,9 @@ class NetworkTrafficEnv(gym.Env):
                 intersection.apply_action(action, dt=self.dt)
 
             # 2. Generate stochastic arrivals for this second
-            new_entities_dict = self.traffic_generator.generate_entities(float(self.time_step))
+            new_entities_dict = self.traffic_generator.generate_entities(
+                float(self.time_step)
+            )
 
             # 3. Inject new arrivals into the correct incoming lanes based on movement type
             for lane in self.traffic_map.lanes:
@@ -187,7 +213,9 @@ class NetworkTrafficEnv(gym.Env):
                     continue
 
                 # Filter entities: pedestrians are not placed on vehicle lanes
-                vehicles_to_add = [e for e in entities_to_add if hasattr(e, "movement_type")]
+                vehicles_to_add = [
+                    e for e in entities_to_add if hasattr(e, "movement_type")
+                ]
 
                 # Assign each vehicle to the correct lane based on its movement type
                 for vehicle in vehicles_to_add:

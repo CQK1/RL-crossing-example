@@ -4,9 +4,9 @@
     "simulation_day_seconds": 86400
   },
   "training": {
-    "train_days": 5,
-    "n_steps": 720,
-    "batch_size": 60,
+    "train_days": 20,
+    "n_steps": 1440,
+    "batch_size": 128,
     "verbose": 1,
     "tensorboard_log": "./traffic_tensorboard/",
     "model_dir": "models",
@@ -16,6 +16,12 @@
   "benchmark": {
     "eval_episodes": 3,
     "q_table_path": "data/q_table/best_q_table_Node_A.json",
-    "fixed_time_hold_seconds": 30
+    "fixed_time_hold_seconds": 30,
+    "policies": ["Baseline (Fixed-Time)", "Deep RL (PPO)"],
+    "policies_available": {
+      "Baseline (Fixed-Time)": "Fixed-time cyclic signal control, no learning",
+      "Tabular Q-Learning": "Table-based RL agent using discretized state",
+      "Deep RL (PPO)": "PPO neural network policy"
+    }
   }
 }

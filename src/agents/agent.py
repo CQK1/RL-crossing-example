@@ -3,30 +3,96 @@ import json
 import os
 import ast
 
+
 class QLearningAgent:
     def __init__(self, action_space=[0, 1, 2, 3], alpha=0.1, gamma=0.9, epsilon=0.1):
         self.action_space = action_space
-        self.alpha = alpha       # Learning rate: how much the agent updates its knowledge based on new information (0 means no learning, 1 means only the latest info matters)
-        self.gamma = gamma       # Discount factor: how much the agent values future rewards (0 means only immediate rewards matter, 1 means all future rewards are equally important)
-        self.epsilon = epsilon   # Exploration rate: the probability of taking a random action (helps the agent explore new strategies)
-        self.q_table = {}        # Q-table: the agent's memory, storing the expected rewards for each state-action pair
+        self.alpha = alpha  # Learning rate: how much the agent updates its knowledge based on new information (0 means no learning, 1 means only the latest info matters)
+        self.gamma = gamma  # Discount factor: how much the agent values future rewards (0 means only immediate rewards matter, 1 means all future rewards are equally important)
+        self.epsilon = epsilon  # Exploration rate: the probability of taking a random action (helps the agent explore new strategies)
+        self.q_table = (
+            {}
+        )  # Q-table: the agent's memory, storing the expected rewards for each state-action pair
+
+    def _bucketize(self, value, bucket_size=10.0, max_buckets=12):
+        """
+        Convert a continuous value into a discrete bucket index.
+
+        :param value: Continuous value to bucketize.
+        :param bucket_size: Width of each bucket.
+        :param max_buckets: Maximum bucket index (values above this are capped).
+        :return: Integer bucket index.
+        """
+        return int(min(value / bucket_size, max_buckets))
+
+    def _get_state_key(self, state):
+        # State order:
+        # [current_phase, phase_timer_normalized,
+        #  ns_straight, ns_left, ew_straight, ew_left,
+        #  ns_straight_max_wait, ns_left_max_wait, ew_straight_max_wait, ew_left_max_wait]
+        phase = int(state.get("current_phase", 0))
+
+        # Discretize phase_timer (normalized 0-1) into 6 buckets
+        phase_timer_raw = state.get("phase_timer", 0.0)
+        phase_timer_bin = int(min(phase_timer_raw * 6.0, 5.0))
+
+        # Queue lengths (already integers)
+        ns_s = int(state.get("queue_ns_straight", 0))
+        ns_l = int(state.get("queue_ns_left", 0))
+        ew_s = int(state.get("queue_ew_straight", 0))
+        ew_l = int(state.get("queue_ew_left", 0))
+
+        # Max waiting times (bucketized into 10-second bins, capped at 120s)
+        ns_sw = self._bucketize(state.get("max_wait_ns_straight", 0.0))
+        ns_lw = self._bucketize(state.get("max_wait_ns_left", 0.0))
+        ew_sw = self._bucketize(state.get("max_wait_ew_straight", 0.0))
+        ew_lw = self._bucketize(state.get("max_wait_ew_left", 0.0))
+
+        return (
+            phase,
+            phase_timer_bin,
+            ns_s,
+            ns_l,
+            ew_s,
+            ew_l,
+            ns_sw,
+            ns_lw,
+            ew_sw,
+            ew_lw,
+        )
 
     def _get_state_key(self, state):
         # 提取新的详细排队状态作为 Q-Table 的键
         # 状态顺序：[current_phase, phase_timer_normalized, ns_straight, ns_left, ew_straight, ew_left]
-        phase = int(state.get('current_phase', 0))
-        
+        phase = int(state.get("current_phase", 0))
+
         # 将 phase_timer 离散化成 0-5 的整数（归一化值 0-1 映射到 0-5）
-        phase_timer_raw = state.get('phase_timer', 0.0)
+        phase_timer_raw = state.get("phase_timer", 0.0)
         phase_timer_bin = int(min(phase_timer_raw * 6.0, 5.0))  # 离散化成 6 个桶
-        
-        ns_s = int(state.get('queue_ns_straight', 0))
-        ns_l = int(state.get('queue_ns_left', 0))
-        ew_s = int(state.get('queue_ew_straight', 0))
-        ew_l = int(state.get('queue_ew_left', 0))
-        
-        return (phase, phase_timer_bin, ns_s, ns_l, ew_s, ew_l)
-    
+
+        ns_s = int(state.get("queue_ns_straight", 0))
+        ns_l = int(state.get("queue_ns_left", 0))
+        ew_s = int(state.get("queue_ew_straight", 0))
+        ew_l = int(state.get("queue_ew_left", 0))
+
+        ns_sw = int(state.get("max_wait_ns_straight", 0))
+        ns_lw = int(state.get("max_wait_ns_left", 0))
+        ew_sw = int(state.get("max_wait_ew_straight", 0))
+        ew_lw = int(state.get("max_wait_ew_left", 0))
+
+        return (
+            phase,
+            phase_timer_bin,
+            ns_s,
+            ns_l,
+            ew_s,
+            ew_l,
+            ns_sw,
+            ns_lw,
+            ew_sw,
+            ew_lw,
+        )
+
     def _ensure_state_in_q_table(self, state):
         state_key = self._get_state_key(state)
         if state_key not in self.q_table:
@@ -45,13 +111,19 @@ class QLearningAgent:
             # Exploit: choose the action with the highest Q-value for the current state
             q_values = self.q_table[state_key]
             max_q = max(q_values.values())
-            best_actions = [action for action, q_value in q_values.items() if q_value == max_q]
+            best_actions = [
+                action for action, q_value in q_values.items() if q_value == max_q
+            ]
 
             if not best_actions:
-                return random.choice(self.action_space)  # If no best action, choose randomly
-            
-            return random.choice(best_actions)  # If multiple actions have the same max Q-value, choose randomly among them
-        
+                return random.choice(
+                    self.action_space
+                )  # If no best action, choose randomly
+
+            return random.choice(
+                best_actions
+            )  # If multiple actions have the same max Q-value, choose randomly among them
+
     def learn(self, state, action, reward, next_state, done):
         self._ensure_state_in_q_table(state)
         self._ensure_state_in_q_table(next_state)
@@ -65,11 +137,15 @@ class QLearningAgent:
         else:
             best_next_q = max(self.q_table[next_state_key].values())
             target = reward + self.gamma * best_next_q
-        
-        self.q_table[state_key][action] += self.alpha * (target - self.q_table[state_key][action])
+
+        self.q_table[state_key][action] += self.alpha * (
+            target - self.q_table[state_key][action]
+        )
 
     def save_q_table(self, filename="q_table.json"):
-        exportable_q_table = {str(state): values for state, values in self.q_table.items()}
+        exportable_q_table = {
+            str(state): values for state, values in self.q_table.items()
+        }
         with open(filename, "w") as f:
             json.dump(exportable_q_table, f)
         print(f"Q-table has been saved to {filename}")
@@ -79,9 +155,13 @@ class QLearningAgent:
             with open(filename, "r") as f:
                 loaded_q_table = json.load(f)
                 self.q_table = {
-                    ast.literal_eval(state_str): {int(act_str): q_val for act_str, q_val in q_values.items()}
+                    ast.literal_eval(state_str): {
+                        int(act_str): q_val for act_str, q_val in q_values.items()
+                    }
                     for state_str, q_values in loaded_q_table.items()
                 }
             print(f"Q-table has been loaded from {filename}")
         else:
-            print(f"No Q-table file found at {filename}. Starting with an empty Q-table.")
+            print(
+                f"No Q-table file found at {filename}. Starting with an empty Q-table."
+            )
