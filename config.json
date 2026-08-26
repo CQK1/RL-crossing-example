@@ -4,9 +4,9 @@
     "simulation_day_seconds": 86400
   },
   "training": {
-    "train_days": 20,
-    "n_steps": 1440,
-    "batch_size": 128,
+    "train_days": 5,
+    "n_steps": 720,
+    "batch_size": 120,
     "verbose": 1,
     "tensorboard_log": "./traffic_tensorboard/",
     "model_dir": "models",

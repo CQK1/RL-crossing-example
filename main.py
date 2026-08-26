@@ -2,7 +2,8 @@ import os
 import json
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback
 from src.environment.network_traffic_env import NetworkTrafficEnv
 
@@ -18,46 +19,46 @@ TRAIN_DAYS = CONFIG["training"]["train_days"]
 STEPS_PER_DAY = DAY_SECONDS // DECISION_INTERVAL
 TOTAL_TIMESTEPS = STEPS_PER_DAY * TRAIN_DAYS
 
+# Number of parallel environments (adjust based on CPU cores)
+NUM_ENVS = 1
+
+
 class TrafficLoggingCallback(BaseCallback):
     def __init__(self, verbose=0):
         super(TrafficLoggingCallback, self).__init__(verbose)
-        self.best_reward = float('-inf')
+        self.best_reward = float("-inf")
         self.episode_count = 0
         self.current_ep_normalized_reward = 0.0
 
     def _on_step(self) -> bool:
         step_rewards = self.locals.get("rewards")
         if step_rewards is not None:
-            self.current_ep_normalized_reward += float(step_rewards[0])
+            self.current_ep_normalized_reward += float(np.mean(step_rewards))
 
-        if self.locals.get("dones")[0]:
-            self.episode_count += 1
-            info = self.locals.get("infos")[0]
-            
-            episode_reward = info.get("episode", {}).get("r", 0.0)
-            episode_length = info.get("episode", {}).get("l", 0)
-            
-            print(f"   Episode {self.episode_count} | Steps: {episode_length}")
-            print(f"   └── Raw Reward:  {episode_reward:.1f}")
-            print(f"   └── Norm Reward: {self.current_ep_normalized_reward:.2f}")
+        dones = self.locals.get("dones")
+        if dones is not None and any(dones):
+            # Print normalized cumulative reward instead of raw Monitor reward
+            print(f"   Episode finished")
+            print(f"   └── Normalized Cumulative Reward: {self.current_ep_normalized_reward:.2f}")
 
-            if episode_reward > self.best_reward:
-                self.best_reward = episode_reward
-                print(f" New Best Raw Reward: {self.best_reward:.1f}! Saving best model...")
+            if self.current_ep_normalized_reward > self.best_reward:
+                self.best_reward = self.current_ep_normalized_reward
+                print(f"   New Best Normalized Reward: {self.best_reward:.2f}! Saving best model...")
                 os.makedirs(CONFIG["training"]["model_dir"], exist_ok=True)
-                
-                # Save both model weights and normalization statistics
-                best_model_path = os.path.join(CONFIG["training"]["model_dir"], CONFIG["training"]["best_model_name"])
+                best_model_path = os.path.join(
+                    CONFIG["training"]["model_dir"],
+                    CONFIG["training"]["best_model_name"],
+                )
                 self.model.save(best_model_path)
-                self.training_env.save(os.path.join(CONFIG["training"]["model_dir"], "vec_normalize.pkl"))
-            
+                self.training_env.save(
+                    os.path.join(CONFIG["training"]["model_dir"], "vec_normalize.pkl")
+                )
+
             print("-" * 80)
             self.current_ep_normalized_reward = 0.0
 
         return True
-
 def train_agent(timesteps=TOTAL_TIMESTEPS):
-    # Pass the dynamic decision interval from config
     def make_env():
         base_env = NetworkTrafficEnv(decision_interval=DECISION_INTERVAL)
         return Monitor(base_env)
@@ -67,26 +68,28 @@ def train_agent(timesteps=TOTAL_TIMESTEPS):
 
     os.makedirs(CONFIG["training"]["model_dir"], exist_ok=True)
 
+    # Single environment (fastest for lightweight simulations)
     vec_env = DummyVecEnv([make_env])
     env = VecNormalize(vec_env, norm_obs=False, norm_reward=True, clip_reward=10.0)
 
     model = PPO(
-        "MlpPolicy", 
-        env, 
+        "MlpPolicy",
+        env,
         n_steps=CONFIG["training"]["n_steps"],
         batch_size=CONFIG["training"]["batch_size"],
-        verbose=CONFIG["training"]["verbose"], 
-        tensorboard_log=CONFIG["training"]["tensorboard_log"]
+        verbose=CONFIG["training"]["verbose"],
+        tensorboard_log=CONFIG["training"]["tensorboard_log"],
     )
     logging_callback = TrafficLoggingCallback()
 
     model.learn(total_timesteps=timesteps, callback=logging_callback)
-    
-    # Save final models and final statistics
+
     final_model_path = os.path.join(CONFIG["training"]["model_dir"], CONFIG["training"]["final_model_name"])
     model.save(final_model_path)
     env.save(os.path.join(CONFIG["training"]["model_dir"], "vec_normalize_final.pkl"))
     print(f"Training complete. Final model saved to {final_model_path}.")
 
 if __name__ == "__main__":
+    import numpy as np  # for callback mean calculation
+
     train_agent(timesteps=TOTAL_TIMESTEPS)
