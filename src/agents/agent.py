@@ -61,38 +61,6 @@ class QLearningAgent:
             ew_lw,
         )
 
-    def _get_state_key(self, state):
-        # 提取新的详细排队状态作为 Q-Table 的键
-        # 状态顺序：[current_phase, phase_timer_normalized, ns_straight, ns_left, ew_straight, ew_left]
-        phase = int(state.get("current_phase", 0))
-
-        # 将 phase_timer 离散化成 0-5 的整数（归一化值 0-1 映射到 0-5）
-        phase_timer_raw = state.get("phase_timer", 0.0)
-        phase_timer_bin = int(min(phase_timer_raw * 6.0, 5.0))  # 离散化成 6 个桶
-
-        ns_s = int(state.get("queue_ns_straight", 0))
-        ns_l = int(state.get("queue_ns_left", 0))
-        ew_s = int(state.get("queue_ew_straight", 0))
-        ew_l = int(state.get("queue_ew_left", 0))
-
-        ns_sw = int(state.get("max_wait_ns_straight", 0))
-        ns_lw = int(state.get("max_wait_ns_left", 0))
-        ew_sw = int(state.get("max_wait_ew_straight", 0))
-        ew_lw = int(state.get("max_wait_ew_left", 0))
-
-        return (
-            phase,
-            phase_timer_bin,
-            ns_s,
-            ns_l,
-            ew_s,
-            ew_l,
-            ns_sw,
-            ns_lw,
-            ew_sw,
-            ew_lw,
-        )
-
     def _ensure_state_in_q_table(self, state):
         state_key = self._get_state_key(state)
         if state_key not in self.q_table:

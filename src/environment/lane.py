@@ -16,6 +16,7 @@ class Lane:
         self.vehicles = []
         self.approach_direction = "Unknown"
         self.lane_type = lane_type  # Determines which vehicle movements are allowed here
+        self.virtual_queue_count = 0  # Overflow vehicles that couldn't enter due to capacity
 
     def update_vehicles_physics(self, dt=1.0, stop_line=None, is_red_func=None):
         """
@@ -81,4 +82,18 @@ class Lane:
                 leaving_vehicles.append(car)
 
         self.vehicles = staying_vehicles
+
+        # Vacancies opened up: promote vehicles from virtual queue into physical lane
+        freed_spaces = len(leaving_vehicles)
+        if freed_spaces > 0 and self.virtual_queue_count > 0:
+            moved_in = min(freed_spaces, self.virtual_queue_count)
+            self.virtual_queue_count -= moved_in
+            for _ in range(moved_in):
+                from src.entities.vehicle import Vehicle
+                new_car = Vehicle(start_pos=0.0, destination="Mayor_Magrath")
+                new_car.movement_type = (
+                    "straight" if self.lane_type == "straight_right" else "left"
+                )
+                self.vehicles.append(new_car)
+
         return leaving_vehicles

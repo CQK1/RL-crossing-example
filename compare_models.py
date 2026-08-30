@@ -7,12 +7,18 @@ from src.agents.agent import QLearningAgent
 
 # Map state vector to dictionary format for your existing QLearningAgent
 def array_to_dict(state_array):
+    # Align dictionary keys strictly with observation layout
     return {
         'current_phase': state_array[0],
-        'queue_ns_straight': state_array[1],
-        'queue_ns_left': state_array[2],
-        'queue_ew_straight': state_array[3],
-        'queue_ew_left': state_array[4]
+        'phase_timer': state_array[1],
+        'queue_ns_straight': state_array[2],
+        'queue_ns_left': state_array[3],
+        'queue_ew_straight': state_array[4],
+        'queue_ew_left': state_array[5],
+        'max_wait_ns_straight': state_array[6],
+        'max_wait_ns_left': state_array[7],
+        'max_wait_ew_straight': state_array[8],
+        'max_wait_ew_left': state_array[9]
     }
 
 def evaluate_q_learning(episodes=3, q_table_path="data/q_table/best_q_table_Node_A.json"):
