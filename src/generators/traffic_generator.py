@@ -9,89 +9,53 @@ class TrafficGenerator:
         """
         Traffic Generator Engine.
 
-        This class acts as the "factory" that creates physical vehicle/pedestrian instances.
+        This class acts as the "factory" that creates physical vehicle instances.
         It is decoupled from the mathematical logic of *when* to spawn them.
 
         :param rate_model: A mathematical model instance (e.g., InhomogeneousPoissonProcess)
-                           that provides a method to query the arrival probability lambda(t)
-                           for any given time step and direction.
+                           that provides methods to query arrival probability.
         """
-        # Dependency injection: the mathematical model provides arrival rates
         self.rate_model = rate_model
 
-        # Mapping: physical approach directions (North, South, East, West)
-        # to the column names in the Excel dataset (mathematical model).
-        self.movements_mapping = {
-            "North": {
-                "straight": "north_thru",
-                "left": "north_left",
-                "right": "north_right",
-                "u_turn": "north_u_turn",
-                "pedestrian": "north_peds_cw"
-            },
-            "South": {
-                "straight": "south_thru",
-                "left": "south_left",
-                "right": "south_right",
-                "u_turn": "south_u_turn",
-                "pedestrian": "south_peds_cw"
-            },
-            "East": {
-                "straight": "east_thru",
-                "left": "east_left",
-                "right": "east_right",
-                "u_turn": "east_u_turn",
-                "pedestrian": "east_peds_cw"
-            },
-            "West": {
-                "straight": "west_thru",
-                "left": "west_left",
-                "right": "west_right",
-                "u_turn": "west_u_turn",
-                "pedestrian": "west_peds_cw"
-            }
-        }
-
-    def generate_entities(self, time_in_seconds: float):
+    def generate_for_lane(self, second_idx: int, approach_direction: str, lane_type: str):
         """
-        Generate physical vehicles and pedestrians based on arrival probabilities
-        provided by the external rate_model at the current simulation time.
+        Generate vehicles directly matched to a specific incoming lane.
 
-        :param time_in_seconds: Current global simulation time in seconds.
-        :return: A dictionary containing lists of generated entities for each approach direction.
-                 Format: {"North": [Vehicle, Pedestrian, ...], "South": [...], ...}
-                 Each Vehicle has a `destination` string and a `movement_type` attribute.
+        :param second_idx: Current simulation time in seconds (integer).
+        :param approach_direction: "North", "South", "East", or "West".
+        :param lane_type: "straight_right" or "left_uturn".
+        :return: List of Vehicle objects to inject into the lane.
         """
-        new_entities = {"North": [], "South": [], "East": [], "West": []}
+        new_cars = []
+        sec = second_idx % 86400
+        prefix = approach_direction.lower()
 
-        for direction, movements in self.movements_mapping.items():
-            # 1. Generate motor vehicles
-            for intent, column_name in movements.items():
-                if intent == "pedestrian":
-                    continue  # Pedestrians are handled separately below
+        if lane_type == "straight_right":
+            thru_prob = self.rate_model.get_rate_fast(sec, f"{prefix}_thru")
+            right_prob = self.rate_model.get_rate_fast(sec, f"{prefix}_right")
 
-                # Query the mathematical model for the arrival probability at this time
-                probability = self.rate_model.get_rate_interpolated(time_in_seconds, column_name)
+            if random.random() < thru_prob:
+                car = Vehicle(start_pos=0.0, destination="Mayor_Magrath")
+                car.movement_type = "straight"
+                new_cars.append(car)
 
-                # Roll the dice: Poisson arrival simulation
-                if random.random() < probability:
-                    # Build the destination label that matches intersection.py's is_movement_allowed format
-                    # Example: intent "left" -> destination "Mayor_Magrath_left"
-                    if intent == "straight":
-                        dest = "Mayor_Magrath"
-                    else:
-                        dest = f"Mayor_Magrath_{intent}"
+            if random.random() < right_prob:
+                car = Vehicle(start_pos=0.0, destination="Mayor_Magrath_right")
+                car.movement_type = "right"
+                new_cars.append(car)
 
-                    car = Vehicle(start_pos=0.0, destination=dest)
-                    car.movement_type = intent  # Store movement type for lane assignment
-                    new_entities[direction].append(car)
+        elif lane_type == "left_uturn":
+            left_prob = self.rate_model.get_rate_fast(sec, f"{prefix}_left")
+            uturn_prob = self.rate_model.get_rate_fast(sec, f"{prefix}_u_turn")
 
-            # 2. Generate pedestrians
-            ped_column = movements.get("pedestrian")
-            if ped_column:
-                ped_prob = self.rate_model.get_rate_interpolated(time_in_seconds, ped_column)
-                if random.random() < ped_prob:
-                    pedestrian = Pedestrian(start_pos=0.0)
-                    new_entities[direction].append(pedestrian)
+            if random.random() < left_prob:
+                car = Vehicle(start_pos=0.0, destination="Mayor_Magrath_left")
+                car.movement_type = "left"
+                new_cars.append(car)
 
-        return new_entities
+            if random.random() < uturn_prob:
+                car = Vehicle(start_pos=0.0, destination="Mayor_Magrath_u_turn")
+                car.movement_type = "u_turn"
+                new_cars.append(car)
+
+        return new_cars

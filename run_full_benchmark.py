@@ -58,19 +58,17 @@ def array_to_dict(state_array):
 
 
 def evaluate_policy(policy_type, episodes=EVAL_EPISODES):
-    # Base environment for Baseline and Q-Learning (no VecNormalize needed)
+    # Base environment automatically binds to unified decision interval
     env = NetworkTrafficEnv(decision_interval=DECISION_INTERVAL)
 
     if policy_type == "Baseline (Fixed-Time)":
         agent = FixedTimeBaselineAgent()
-        norm_env = None  # No VecNormalize for Baseline
 
     elif policy_type == "Tabular Q-Learning":
         agent = QLearningAgent()
         if os.path.exists(Q_TABLE_PATH):
             agent.load_q_table(Q_TABLE_PATH)
         agent.epsilon = 0.0
-        norm_env = None
 
     elif policy_type == "Deep RL (PPO)":
         def make_env():
@@ -93,16 +91,11 @@ def evaluate_policy(policy_type, episodes=EVAL_EPISODES):
     delays, throughputs, phase_switches = [], [], []
 
     for ep in range(episodes):
-        # Reset the correct environment
-        if policy_type == "Deep RL (PPO)":
-            state = norm_env.reset()
-        else:
-            state, _ = env.reset(seed=42 + ep)
-
+        state, _ = env.reset(seed=42 + ep)
         done = False
         ep_delay = 0.0
         switches = 0
-        last_phase = state[0]
+        last_phase = env.traffic_map.intersections["Mayor_Magrath"].current_phase_index
 
         while not done:
             if policy_type == "Baseline (Fixed-Time)":
@@ -118,12 +111,7 @@ def evaluate_policy(policy_type, episodes=EVAL_EPISODES):
                 switches += 1
                 last_phase = action
 
-            # Step the correct environment
-            if policy_type == "Deep RL (PPO)":
-                next_state, reward, terminated, truncated, _ = norm_env.step([action])
-            else:
-                next_state, reward, terminated, truncated, _ = env.step([action])
-
+            next_state, reward, terminated, truncated, _ = env.step([action])
             done = terminated or truncated
             ep_delay += abs(reward)
             state = next_state

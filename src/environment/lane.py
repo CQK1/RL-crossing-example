@@ -28,7 +28,7 @@ class Lane:
         :return: List of vehicles that exited the lane in this time step.
         """
         # Sort vehicles by position in descending order (front vehicle first)
-        self.vehicles.sort(key=lambda x: x.position, reverse=True)
+        # self.vehicles.sort(key=lambda x: x.position, reverse=True)
 
         for i, car in enumerate(self.vehicles):
             target_acc = 1.5  # Default mild acceleration (m/s^2)

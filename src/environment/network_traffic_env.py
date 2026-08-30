@@ -160,8 +160,6 @@ class NetworkTrafficEnv(gym.Env):
             ew_left_max_wait_norm,
         ], dtype=np.float32)
 
-        return obs
-
         """
         Build the observation vector from the current intersection state.
 
@@ -382,45 +380,63 @@ class NetworkTrafficEnv(gym.Env):
             else:
                 # Normal green phase for the target action
                 intersection.apply_action(action, dt=self.dt)
-
-            # 2. Generate stochastic arrivals for this second
-            new_entities_dict = self.traffic_generator.generate_entities(
-                float(self.time_step)
-            )
-            # 3. Inject new arrivals into the correct incoming lanes based on movement type
+                
+                
+            # 2. Generate vehicles directly for each incoming lane
             for lane in self.traffic_map.lanes:
                 if lane.to_node_id != "Mayor_Magrath":
                     continue
 
-                direction = lane.approach_direction
-                entities_to_add = new_entities_dict.get(direction, [])
+                new_cars = self.traffic_generator.generate_for_lane(
+                    int(self.time_step),
+                    lane.approach_direction,
+                    lane.lane_type
+                )
 
-                if not entities_to_add:
-                    continue
+                for car in new_cars:
+                    if len(lane.vehicles) < 40:
+                        lane.vehicles.append(car)
+                    else:
+                        lane.virtual_queue_count += 1
+            
+            # 2. Generate stochastic arrivals for this second
+            # new_entities_dict = self.traffic_generator.generate_entities(
+            #     float(self.time_step)
+            # )
+            # # 3. Inject new arrivals into the correct incoming lanes based on movement type
+            # for lane in self.traffic_map.lanes:
+            #     if lane.to_node_id != "Mayor_Magrath":
+            #         continue
 
-                # Filter entities: pedestrians are not placed on vehicle lanes
-                vehicles_to_add = [
-                    e for e in entities_to_add if hasattr(e, "movement_type")
-                ]
+            #     direction = lane.approach_direction
+            #     entities_to_add = new_entities_dict.get(direction, [])
 
-                # Assign each vehicle to the correct lane based on its movement type
-                for vehicle in vehicles_to_add:
-                    if lane.lane_type == "straight_right":
-                        if vehicle.movement_type in ["straight", "right"]:
-                            if len(lane.vehicles) < 40:
-                                lane.vehicles.append(vehicle)
-                            else:
-                                lane.virtual_queue_count += 1  # Overflow to virtual queue
-                    elif lane.lane_type == "left_uturn":
-                        if vehicle.movement_type in ["left", "u_turn"]:
-                            if len(lane.vehicles) < 40:
-                                lane.vehicles.append(vehicle)
-                            else:
-                                lane.virtual_queue_count += 1  # Overflow to virtual queue
+            #     if not entities_to_add:
+            #         continue
 
-            # Clear the temporary entities dictionary for the next second
-            for direction in new_entities_dict.keys():
-                new_entities_dict[direction] = []
+            #     # Filter entities: pedestrians are not placed on vehicle lanes
+            #     vehicles_to_add = [
+            #         e for e in entities_to_add if hasattr(e, "movement_type")
+            #     ]
+
+            #     # Assign each vehicle to the correct lane based on its movement type
+            #     for vehicle in vehicles_to_add:
+            #         if lane.lane_type == "straight_right":
+            #             if vehicle.movement_type in ["straight", "right"]:
+            #                 if len(lane.vehicles) < 40:
+            #                     lane.vehicles.append(vehicle)
+            #                 else:
+            #                     lane.virtual_queue_count += 1  # Overflow to virtual queue
+            #         elif lane.lane_type == "left_uturn":
+            #             if vehicle.movement_type in ["left", "u_turn"]:
+            #                 if len(lane.vehicles) < 40:
+            #                     lane.vehicles.append(vehicle)
+            #                 else:
+            #                     lane.virtual_queue_count += 1  # Overflow to virtual queue
+
+            # # Clear the temporary entities dictionary for the next second
+            # for direction in new_entities_dict.keys():
+            #     new_entities_dict[direction] = []
 
             # 4. Advance physics simulation by 1 second
             self.traffic_map.step(dt=self.dt)
